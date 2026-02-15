@@ -252,23 +252,33 @@ install_local_cli() {
 
   local target="$target_dir/algora1"
 
-  # Absolute path to the currently running script
-  local self
-  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  # If we're running from a pipe (stdin), we can't cp "$0".
+  # Download installer content to the target instead.
+  if [ "${0##*/}" = "bash" ] || [ "${0##*/}" = "sh" ] || [ ! -f "${0}" ]; then
+    : "${ALGORA1_INSTALL_URL:=https://raw.githubusercontent.com/Yohannes22-ops/algora1-installer/main/algora1.sh}"
+    need_cmd curl || ui_die "curl is required to install the local command."
 
-  # Only copy if we're NOT already running from the target path
-  if [ "$self" != "$target" ]; then
-    cp -f "$self" "$target"
-    chmod +x "$target"
-    ui_ok "Installed local command: $target"
+    ui_info "Installing local command by downloading from ${ALGORA1_INSTALL_URL}"
+    curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" || ui_die "Failed to download installer."
+    chmod +x "${target}"
+    ui_ok "Installed local command: ${target}"
   else
-    ui_ok "Local command already installed: $target"
+    # Normal case: script is a real file on disk
+    local self
+    self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+    if [ "$self" != "$target" ]; then
+      cp -f "$self" "$target"
+      chmod +x "$target"
+      ui_ok "Installed local command: $target"
+    else
+      ui_ok "Local command already installed: $target"
+    fi
   fi
 
   ui_info "Add this to your shell profile if needed:"
   ui_info "  export PATH=\"$target_dir:\$PATH\""
 
-  # macOS/zsh: persist PATH update so `algora1` works in new terminals
   if [ "$(detect_os)" = "macos" ]; then
     local zshrc="${HOME}/.zshrc"
     local line='export PATH="$HOME/.local/bin:$PATH"'
@@ -278,7 +288,6 @@ install_local_cli() {
       ui_ok "Added ~/.local/bin to PATH in ~/.zshrc"
       ui_info "Restart Terminal or run: source ~/.zshrc"
     fi
-    # Make it work immediately in THIS run too
     export PATH="$HOME/.local/bin:$PATH"
   fi
 }
