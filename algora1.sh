@@ -43,6 +43,16 @@ logq() { [ "${QUIET}" = "1" ] || log "$@"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
 die()  { printf "\n\033[1;31m[error]\033[0m %s\n" "$*" >&2; exit 1; }
 
+# =========================
+# THEME (gum colors)
+# =========================
+C_ACCENT=39      # blue
+C_CURSOR=33      # yellow (cursor highlight)
+C_OK=40          # green-ish
+C_WARN=226       # yellow
+C_ERR=196        # red
+C_MUTED=245      # grey
+
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 detect_os() {
@@ -63,10 +73,10 @@ ui_has_gum() { need_cmd gum; }
 ui_header() {
   if ui_has_gum; then
     gum style --border rounded --padding "1 2" --margin "0 0 1 0" \
-      --border-foreground 212 \
-      "$(printf "🚀 algora1 Installer\nAutomated investment engine deployment.\nmodern installer mode")" >&2
+      --border-foreground ${C_ACCENT} \
+      "$(printf "🎿 algora1 Installer\nAutomated investment engine deployment.\nmodern installer mode")" >&2
   else
-    log "🚀 algora1 Installer"
+    log "🎿 algora1 Installer"
     log "Automated investment engine deployment."
   fi
 }
@@ -74,7 +84,7 @@ ui_header() {
 ui_step() {
   local label="$1"
   if ui_has_gum; then
-    gum style --bold --foreground 212 "$label" >&2
+    gum style --bold --foreground ${C_ACCENT} "$label" >&2
   else
     log "$label"
   fi
@@ -92,7 +102,7 @@ ui_ok() {
 ui_info() {
   local msg="$1"
   if ui_has_gum; then
-    gum style --foreground 245 "INFO $msg" >&2
+    gum style --foreground ${C_MUTED} "INFO $msg" >&2
   else
     log "INFO $msg"
   fi
@@ -101,7 +111,7 @@ ui_info() {
 ui_warn() {
   local msg="$1"
   if ui_has_gum; then
-    gum style --foreground 214 "WARN $msg" >&2
+    gum style --foreground ${C_WARN} "WARN $msg" >&2
   else
     warn "$msg"
   fi
@@ -110,7 +120,7 @@ ui_warn() {
 ui_die() {
   local msg="$1"
   if ui_has_gum; then
-    gum style --foreground 196 --bold "ERROR $msg" >&2
+    gum style --foreground ${C_ERR} --bold "ERROR $msg" >&2
   else
     die "$msg"
   fi
@@ -121,7 +131,11 @@ ui_spin() {
   local label="$1"
   shift
   if ui_has_gum; then
-    gum spin --spinner dot --title "$label" -- "$@" >/dev/null 2>&1
+    gum spin \
+      --spinner dot \
+      --spinner.foreground ${C_ACCENT} \
+      --title.foreground ${C_ACCENT} \
+      --title "$label" -- "$@" >/dev/null 2>&1
   else
     ui_info "$label"
     "$@" >/dev/null 2>&1
@@ -131,7 +145,13 @@ ui_spin() {
 ui_choose() {
   local title="$1"; shift
   if ui_has_gum; then
-    gum choose --header "$title" "$@"
+    gum choose \
+      --header "$title" \
+      --header.foreground ${C_ACCENT} \
+      --item.foreground ${C_ACCENT} \
+      --selected.foreground ${C_ACCENT} \
+      --cursor.foreground ${C_CURSOR} \
+      "$@"
   else
     printf "%s\n" "$title" >&2
     local i=1
@@ -149,7 +169,12 @@ ui_choose() {
 ui_input() {
   local prompt="$1"
   if ui_has_gum; then
-    gum input --prompt "$prompt " --placeholder ""
+    gum input \
+      --prompt "$prompt " \
+      --prompt.foreground ${C_ACCENT} \
+      --cursor.foreground ${C_ACCENT} \
+      --placeholder.foreground ${C_MUTED} \
+      --placeholder ""
   else
     printf "%s " "$prompt" >&2
     local v; read -r v
@@ -160,7 +185,11 @@ ui_input() {
 ui_secret() {
   local prompt="$1"
   if ui_has_gum; then
-    gum input --password --prompt "$prompt " --placeholder ""
+    gum input --password \
+      --prompt "$prompt " \
+      --prompt.foreground ${C_ACCENT} \
+      --cursor.foreground ${C_ACCENT} \
+      --placeholder ""
   else
     printf "%s " "$prompt" >&2
     stty -echo || true
@@ -818,7 +847,7 @@ set_project() {
 # =========================
 print_project_id_requirements() {
   if ui_has_gum; then
-    gum style --border rounded --padding "1 2" --border-foreground 214 \
+    gum style --border rounded --padding "1 2" --border-foreground ${C_WARN} \
       "$(printf "Project ID requirements:\n• Lowercase\n• Alphanumeric + dashes only\n• Max length 30\n• Cannot start/end with dash")" >&2
   else
     warn "Project ID requirements:"
@@ -1017,7 +1046,7 @@ ensure_billing_linked_interactive() {
 
   while ! billing_is_enabled "${PROJECT_ID}"; do
     if ui_has_gum; then
-      gum style --border rounded --padding "1 2" --border-foreground 214 \
+      gum style --border rounded --padding "1 2" --border-foreground ${C_WARN} \
         "$(printf "Billing is not linked to this project.\n\n1) Link billing:\n%s\n\nAfter linking billing, press Enter to continue." "$(billing_link_url "${PROJECT_ID}")")" >&2
       gum input --prompt "Press Enter to re-check: " --value "" >/dev/null
     else
@@ -1047,8 +1076,8 @@ ensure_compute_api_enabled_interactive() {
   fi
 
   if ui_has_gum; then
-    if gum spin --spinner dot --title "Enabling compute.googleapis.com…" -- \
-      gcloud services enable compute.googleapis.com --project "${PROJECT_ID}" --quiet >/dev/null 2>&1; then
+    if ui_spin "Enabling compute.googleapis.com…" \
+      gcloud services enable compute.googleapis.com --project "${PROJECT_ID}" --quiet; then
       ui_ok "compute.googleapis.com enabled"
       return
     fi
@@ -1095,7 +1124,7 @@ ensure_compute_api_enabled_interactive() {
 
   ui_warn "Could not enable compute.googleapis.com automatically."
   if ui_has_gum; then
-    gum style --border rounded --padding "1 2" --border-foreground 214 \
+    gum style --border rounded --padding "1 2" --border-foreground ${C_WARN} \
       "$(printf "Enable Compute Engine API in the browser:\n%s\n\nThen press Enter to re-check." "$(compute_enable_url "${PROJECT_ID}")")" >&2
     gum input --prompt "Press Enter to re-check: " --value "" >/dev/null
   else
@@ -1364,7 +1393,13 @@ has_gum() { command -v gum >/dev/null 2>&1; }
 choose() {
   local title="$1"; shift
   if has_gum; then
-    gum choose --header "$title" "$@"
+    gum choose \
+      --header "$title" \
+      --header.foreground 39 \
+      --item.foreground 39 \
+      --selected.foreground 39 \
+      --cursor.foreground 33 \
+      "$@"
   else
     echo "$title"
     local i=1
@@ -1422,7 +1457,7 @@ run_engine_prompt_if_safe() {
 
 # Nice header
 if has_gum; then
-  gum style --border rounded --padding "1 2" --border-foreground 212 \
+  gum style --border rounded --padding "1 2" --border-foreground 39 \
     "$(printf "algora1 session\nOne-session mode enabled")"
 else
   echo "algora1 session (one-session mode enabled)"
@@ -1449,7 +1484,13 @@ has_gum() { command -v gum >/dev/null 2>&1; }
 choose() {
   local title="$1"; shift
   if has_gum; then
-    gum choose --header "$title" "$@"
+    gum choose \
+      --header "$title" \
+      --header.foreground 39 \
+      --item.foreground 39 \
+      --selected.foreground 39 \
+      --cursor.foreground 33 \
+      "$@"
   else
     echo "$title"
     local i=1
@@ -1464,7 +1505,13 @@ input() {
   local prompt="$1"
   if has_gum; then
     # UI to stderr, captured value to stdout
-    gum input --prompt "$prompt " --placeholder "" --width 40 1>&2
+    gum input \
+      --prompt "$prompt " \
+      --prompt.foreground 39 \
+      --cursor.foreground 39 \
+      --placeholder.foreground 245 \
+      --placeholder "" \
+      --width 40 1>&2
     # ^ gum still returns the typed value on stdout, which the caller captures
   else
     printf "%s " "$prompt" >&2
@@ -1476,7 +1523,11 @@ input() {
 confirm() {
   local prompt="$1"
   if has_gum; then
-    gum confirm "$prompt"
+    gum confirm \
+      --prompt.foreground 39 \
+      --selected.foreground 39 \
+      --unselected.foreground 245 \
+      "$prompt"
   else
     printf "%s [y/N]: " "$prompt"
     local a; read -r a || true
@@ -1581,8 +1632,8 @@ draw_header_once() {
   # Clear once, then draw header once
   clear || true
   if has_gum; then
-    gum style --border rounded --padding "1 2" --border-foreground 212 \
-      "$(printf "algora1 — Control Panel\nThank you for your support.")"
+    gum style --border rounded --padding "1 2" --border-foreground 39 \
+      "$(printf "🎿 algora1 — Control Panel\nThank you for your support.")"
   else
     echo "algora1 — Control Panel (one-session mode enabled)"
   fi
