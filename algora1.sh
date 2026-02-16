@@ -1590,7 +1590,8 @@ connect_only_session() {
   local s
   s="$(get_only_session)"
   [ -n "$s" ] || return 1
-  exec screen -r "$s"
+  screen -r "$s" || true
+  return 0
 }
 
 create_new_session() {
@@ -1676,7 +1677,8 @@ running_sessions_menu() {
     create_new_session "$name"
     ok "Session created: $name"
     ok "Connecting…"
-    exec screen -r "$name"
+    screen -r "$name" || true
+    return 0
   else
     local s
     s="$(get_only_session)"
@@ -1685,7 +1687,8 @@ running_sessions_menu() {
 
     case "$action" in
       "Connect")
-        exec screen -r "$s"
+        screen -r "$s" || true
+        return 0
         ;;
       "Delete session")
         if confirm "Delete session '$s'? This will stop any running engine."; then
