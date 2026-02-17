@@ -23,7 +23,7 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 zip_url_for_engine() {
   case "$1" in
     BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a946656c2c5c4394b23be9ee0c7f3aaa.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3c21708c691846a1844a16ef8a065b9c.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_9005a86c173b4d109a00885fe4b8242f.zip" ;;
     TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0242dce12f274568a8a8d22972479370.zip" ;;
     NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a8c2aabf4eab4cbd8da9e7c844b8043a.zip" ;;
     *) echo "" ;;
