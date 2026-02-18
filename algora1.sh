@@ -1466,7 +1466,7 @@ delete_session() {
     if ! list_sessions_raw | grep -Fxq "$s"; then
       return 0
     fi
-    sleep 0.1
+    sleep 0.1 || true
   done
   return 0
 }
@@ -1662,25 +1662,27 @@ troubleshoot_menu() {
   touch "$logfile" >/dev/null 2>&1 || true
   info "Tailing: $logfile (Ctrl+C to return)"
 
+  # Ctrl+C should return to menu (not exit SSH)
   local stop=0
   trap 'stop=1' INT
 
   while true; do
-    tail -n 200 -f "$logfile" || true &
-    local tp=$!
+    # IMPORTANT:
+    # tail will exit with code 130 on Ctrl+C.
+    # With "set -e", that would kill the whole script unless we neutralize it.
+    set +e
+    tail -n 200 -f "$logfile"
+    local rc=$?
+    set -e
 
-    while kill -0 "$tp" 2>/dev/null; do
-      if [ "$stop" -eq 1 ]; then
-        kill "$tp" 2>/dev/null || true
-        wait "$tp" 2>/dev/null || true
-        trap - INT
-        echo ""
-        return 0
-      fi
-      sleep 0.1 || true
-    done
+    # If user hit Ctrl+C, return to menu
+    if [ "$stop" -eq 1 ]; then
+      trap - INT
+      echo ""
+      return 0
+    fi
 
-    [ "$stop" -eq 1 ] && { trap - INT; echo ""; return 0; }
+    # If tail stopped for another reason (log rotated, file moved, etc), restart it
     sleep 0.2 || true
   done
 }
