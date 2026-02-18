@@ -1245,8 +1245,6 @@ printf "Run: \033[38;5;39malgora1\033[0m\n\n"
 printf "\033[1mMain Menu\033[0m\n"
 printf "  • Running sessions\n"
 printf "  • Live Status\n"
-printf "  • Heartbeat Log\n"
-printf "  • Clear log\n"
 printf "  • Exit\n\n"
 
 printf "\033[1mOne-session mode:\033[0m only one screen session allowed at a time.\n\n"
@@ -1501,16 +1499,6 @@ engine_running_anywhere() {
 }
 
 # ---- logs ----
-log_for_engine() {
-  case "$1" in
-    BEXP) echo "bexp_investing.log" ;;
-    TSLA) echo "tsla_investing.log" ;;
-    NVDA) echo "nvda_investing.log" ;;
-    PMNY) echo "pmny_investing.log" ;;
-    *) echo "bexp_investing.log" ;;
-  esac
-}
-
 live_status_for_engine() {
   case "$1" in
     BEXP) echo "bexp_live_status.txt" ;;
@@ -1603,39 +1591,6 @@ running_sessions_menu() {
   fi
 }
 
-heartbeat_log_menu() {
-  local eng
-  eng="$(detect_running_engine_best_effort || true)"
-
-  local logfile=""
-  if [ -n "$eng" ]; then
-    logfile="$(log_for_engine "$eng")"
-    info "Engine detected: $eng"
-  else
-    local choice
-    choice="$(choose "Heartbeat Log" \
-      "bexp_investing.log" \
-      "tsla_investing.log" \
-      "nvda_investing.log" \
-      "pmny_investing.log" \
-      "Back")"
-    [ "$choice" = "Back" ] && return 0
-    logfile="$choice"
-  fi
-
-  touch "$logfile" >/dev/null 2>&1 || true
-  info "Tailing: $logfile (Ctrl+C to return)"
-
-  local old_trap
-  old_trap="$(trap -p INT || true)"
-  trap 'trap - INT; return 0' INT
-
-  tail -f "$logfile"
-
-  eval "$old_trap" 2>/dev/null || trap - INT
-  return 0
-}
-
 live_status_menu() {
   local eng
   eng="$(detect_running_engine_best_effort || true)"
@@ -1673,35 +1628,6 @@ live_status_menu() {
   return 0
 }
 
-clear_log_menu() {
-  local choice
-  choice="$(choose "Clear log" \
-    "bexp_investing.log" \
-    "tsla_investing.log" \
-    "nvda_investing.log" \
-    "pmny_investing.log" \
-    "Clear all logs" \
-    "Back")"
-
-  [ "$choice" = "Back" ] && return 0
-
-  if [ "$choice" = "Clear all logs" ]; then
-    if confirm "Clear ALL investing logs?"; then
-      : > bexp_investing.log 2>/dev/null || true
-      : > tsla_investing.log 2>/dev/null || true
-      : > nvda_investing.log 2>/dev/null || true
-      : > pmny_investing.log 2>/dev/null || true
-      ok "All logs cleared."
-    fi
-    return 0
-  fi
-
-  if confirm "Clear '$choice'?"; then
-    : > "$choice" 2>/dev/null || true
-    ok "Cleared: $choice"
-  fi
-}
-
 main_loop() {
   draw_header_once
 
@@ -1710,15 +1636,11 @@ main_loop() {
     selection="$(choose "Select an option" \
       "Running sessions" \
       "Live Status" \
-      "Heartbeat Log" \
-      "Clear log" \
       "Exit")"
 
     case "$selection" in
       "Running sessions") running_sessions_menu ;;
       "Live Status") live_status_menu ;;
-      "Heartbeat Log") heartbeat_log_menu ;;
-      "Clear log") clear_log_menu ;;
       "Exit") exit 0 ;;
       *) exit 0 ;;
     esac
