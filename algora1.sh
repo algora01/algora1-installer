@@ -1635,7 +1635,7 @@ live_status_menu() {
     fi
     clear || true
     cat "$file" 2>/dev/null || echo "(no status yet)"
-    sleep 1
+    sleep 1 || true
   done
 }
 
@@ -1666,7 +1666,7 @@ troubleshoot_menu() {
   trap 'stop=1' INT
 
   while true; do
-    tail -n 200 -f "$logfile" &
+    tail -n 200 -f "$logfile" || true &
     local tp=$!
 
     while kill -0 "$tp" 2>/dev/null; do
