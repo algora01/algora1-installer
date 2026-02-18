@@ -1677,14 +1677,12 @@ troubleshoot_menu() {
         echo ""
         return 0
       fi
-      sleep 0.1
+      sleep 0.1 || true
     done
 
-    # tail ended on its own (log rotated etc) → restart unless user hit Ctrl+C
     [ "$stop" -eq 1 ] && { trap - INT; echo ""; return 0; }
-    sleep 0.2
+    sleep 0.2 || true
   done
-
 }
 
 main_loop() {
