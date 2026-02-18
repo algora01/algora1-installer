@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ef9e8addfb84e4ea601b4c8e3ff734b.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_d8d56a8a6ca04097bf59867fef28029f.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a1c121822e6c4093b2173ec608a90cb0.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5d89e599e1224d699c9d2a38cde9e494.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a51d55d453584dfd8508d8394ba09446.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6f401ef0576c458db9f80248298673e0.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_06db31bfd406412bbfc53795c5c1410c.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_7560a729299944f2beba0b077bc5dffb.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1499,6 +1499,16 @@ engine_running_anywhere() {
 }
 
 # ---- logs ----
+log_for_engine() {
+  case "$1" in
+    BEXP) echo "bexp_investing.log" ;;
+    TSLA) echo "tsla_investing.log" ;;
+    NVDA) echo "nvda_investing.log" ;;
+    PMNY) echo "pmny_investing.log" ;;
+    *) echo "pmny_investing.log" ;;
+  esac
+}
+
 live_status_for_engine() {
   case "$1" in
     BEXP) echo "bexp_live_status.txt" ;;
@@ -1628,6 +1638,33 @@ live_status_menu() {
   return 0
 }
 
+troubleshoot_menu() {
+  local eng
+  eng="$(detect_running_engine_best_effort || true)"
+
+  local logfile=""
+  if [ -n "$eng" ]; then
+    logfile="$(log_for_engine "$eng")"
+    info "Engine detected: $eng"
+  else
+    local choice
+    choice="$(choose "Troubleshoot" \
+      "bexp_investing.log" \
+      "tsla_investing.log" \
+      "nvda_investing.log" \
+      "pmny_investing.log" \
+      "Back")"
+    [ "$choice" = "Back" ] && return 0
+    logfile="$choice"
+  fi
+
+  touch "$logfile" >/dev/null 2>&1 || true
+  info "Tailing: $logfile (Ctrl+C to return)"
+
+  # Tail last 200 lines, then follow
+  tail -n 200 -f "$logfile"
+}
+
 main_loop() {
   draw_header_once
 
@@ -1636,11 +1673,13 @@ main_loop() {
     selection="$(choose "Select an option" \
       "Running sessions" \
       "Live Status" \
+      "Troubleshoot" \
       "Exit")"
 
     case "$selection" in
       "Running sessions") running_sessions_menu ;;
       "Live Status") live_status_menu ;;
+      "Troubleshoot") troubleshoot_menu ;;
       "Exit") exit 0 ;;
       *) exit 0 ;;
     esac
