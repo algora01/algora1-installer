@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Silence gcloud's "updates available" and other non-essential notices
 export CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=1
 export CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=1
 
-# =========================
-# FIXED DEFAULTS (no prompts)
-# =========================
 INSTANCE_NAME="algora1"
 KEY_NAME="ssh_key1"
 
@@ -22,17 +18,14 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_47f44e14a95f4a3c910e52932f6801f3.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_7c97840e520346018aea39294de36dd4.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c4daef64f3fd42b0a3bfee7fc87f5c7e.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ac9c53c86284431db24375d523c91472.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f78d315ec85341aabea539a2ca590aef.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ef7b3eae254d4bdca3c6fc16b1bacf50.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a3376482ed854482a4406d7a0a6d895e.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8873ccab666747faa6e693fa81d0f0ff.zip" ;;
     *) echo "" ;;
   esac
 }
 
-# =========================
-# LOCAL PERSISTED CONFIG
-# =========================
 CFG_DIR="${HOME}/.config/algora1_setup"
 CFG_FILE="${CFG_DIR}/config.env"
 
@@ -43,15 +36,12 @@ logq() { [ "${QUIET}" = "1" ] || log "$@"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
 die()  { printf "\n\033[1;31m[error]\033[0m %s\n" "$*" >&2; exit 1; }
 
-# =========================
-# THEME (gum colors)
-# =========================
-C_ACCENT=39      # blue
-C_CURSOR=33      # yellow (cursor highlight)
-C_OK=40          # green-ish
-C_WARN=226       # yellow
-C_ERR=196        # red
-C_MUTED=245      # grey
+C_ACCENT=39      
+C_CURSOR=33      
+C_OK=40          
+C_WARN=226      
+C_ERR=196        
+C_MUTED=245      
 
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
@@ -65,9 +55,6 @@ detect_os() {
   esac
 }
 
-# =========================
-# TUI (gum) LAYER
-# =========================
 ui_has_gum() { need_cmd gum; }
 
 ui_header() {
@@ -200,9 +187,7 @@ ui_secret() {
   fi
 }
 
-# NEW: list-style key/value (no box)
 ui_kv_list() {
-  # ui_kv_list "Key" "Val" ...
   while [ "$#" -ge 2 ]; do
     printf "  %-12s %s\n" "$1:" "$2" >&2
     shift 2
@@ -247,7 +232,7 @@ EOF
 }
 
 install_linux_desktop_shortcut() {
-  local icon_url="$1"   # your Wix image URL (png recommended)
+  local icon_url="$1"
   local apps_dir="${HOME}/.local/share/applications"
   local icon_dir="${HOME}/.local/share/icons"
   local bin_path="${HOME}/.local/bin/algora1"
@@ -281,8 +266,6 @@ install_local_cli() {
 
   local target="$target_dir/algora1"
 
-  # If we're running from a pipe (stdin), we can't cp "$0".
-  # Download installer content to the target instead.
   if [ "${0##*/}" = "bash" ] || [ "${0##*/}" = "sh" ] || [ ! -f "${0}" ]; then
     : "${ALGORA1_INSTALL_URL:=https://raw.githubusercontent.com/algora01/algora1-installer/main/algora1.sh}"
     need_cmd curl || ui_die "curl is required to install the local command."
@@ -292,7 +275,6 @@ install_local_cli() {
     chmod +x "${target}"
     ui_ok "Installed local command: ${target}"
   else
-    # Normal case: script is a real file on disk
     local self
     self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
@@ -321,26 +303,19 @@ install_local_cli() {
   fi
 }
 
-# =========================
-# macOS icon helpers (.png -> .icns) + optional Drive download
-# =========================
 WIX_ICON_PNG_URL="https://static.wixstatic.com/media/ce61ee_00cd47ee0f9c48f69f0f7546f4298188~mv2.png"
 GDRIVE_ICNS_FILE_ID="111ErBsF_zrgT6_jpuQERAFCXYPsSgMap"
 
 download_public_gdrive_file() {
-  # Best-effort downloader for *publicly shared* Drive files.
-  # Works for small files; includes fallback for larger/confirm flows. :contentReference[oaicite:2]{index=2}
   local file_id="$1"
   local out="$2"
 
   need_cmd curl || return 1
 
-  # Fast path (often works)
   if curl -fsSL -o "$out" "https://drive.google.com/uc?export=download&id=${file_id}"; then
     [ -s "$out" ] && return 0
   fi
 
-  # Fallback confirm-token flow (more reliable for larger files)
   local cookie
   cookie="$(mktemp)"
   local html
@@ -355,19 +330,17 @@ download_public_gdrive_file() {
 }
 
 png_to_icns_macos() {
-  # Requires macOS: sips + iconutil
   local png="$1"
   local out_icns="$2"
 
   need_cmd sips     || ui_die "macOS 'sips' not found (unexpected)."
-  need_cmd iconutil || ui_die "macOS 'iconutil' not found (unexpected)."  # :contentReference[oaicite:3]{index=3}
+  need_cmd iconutil || ui_die "macOS 'iconutil' not found (unexpected)."
 
   local tmp
   tmp="$(mktemp -d)"
   local iconset="${tmp}/algora1.iconset"
   mkdir -p "$iconset"
 
-  # Generate required sizes
   sips -z 16 16     "$png" --out "${iconset}/icon_16x16.png" >/dev/null
   sips -z 32 32     "$png" --out "${iconset}/icon_16x16@2x.png" >/dev/null
   sips -z 32 32     "$png" --out "${iconset}/icon_32x32.png" >/dev/null
@@ -379,19 +352,12 @@ png_to_icns_macos() {
   sips -z 512 512   "$png" --out "${iconset}/icon_512x512.png" >/dev/null
   sips -z 1024 1024 "$png" --out "${iconset}/icon_512x512@2x.png" >/dev/null
 
-  iconutil -c icns "$iconset" -o "$out_icns" >/dev/null  # :contentReference[oaicite:4]{index=4}
+  iconutil -c icns "$iconset" -o "$out_icns" >/dev/null
   rm -rf "$tmp"
   [ -s "$out_icns" ]
 }
 
 ensure_algora1_icns() {
-  # Returns path to an icns (prints it), best-effort.
-  # Priority:
-  # 1) explicit path arg
-  # 2) ~/.config/algora1_setup/algora1.icns
-  # 3) ~/Desktop/algora1.icns
-  # 4) download from Drive (if publicly shared)
-  # 5) download Wix PNG + convert to icns
   local provided="${1:-}"
   local cfg_icns="${HOME}/.config/algora1_setup/algora1.icns"
   local desktop_icns="${HOME}/Desktop/algora1.icns"
@@ -408,14 +374,12 @@ ensure_algora1_icns() {
     echo "$desktop_icns"; return 0
   fi
 
-  # Try Drive (only if publicly shared)
   if [ -n "${GDRIVE_ICNS_FILE_ID:-}" ]; then
     if download_public_gdrive_file "$GDRIVE_ICNS_FILE_ID" "$cfg_icns"; then
       echo "$cfg_icns"; return 0
     fi
   fi
 
-  # Build from Wix PNG
   local tmp_png
   tmp_png="$(mktemp -t algora1_icon.XXXXXX).png"
   if curl -fsSL "$WIX_ICON_PNG_URL" -o "$tmp_png"; then
@@ -426,7 +390,6 @@ ensure_algora1_icns() {
   fi
   rm -f "$tmp_png" || true
 
-  # Nothing worked
   echo ""
   return 1
 }
@@ -434,7 +397,6 @@ ensure_algora1_icns() {
 ALGORA1_BUNDLE_ID="com.algora1.launcher"
 
 is_trusted_algora1_app_bundle() {
-  # Returns 0 if the app exists AND matches what we generate
   local app_root="$1"
   local plist="${app_root}/Contents/Info.plist"
   local exe="${app_root}/Contents/MacOS/algora1"
@@ -445,35 +407,29 @@ is_trusted_algora1_app_bundle() {
   [ -x "$exe" ] || return 1
   [ -f "$marker" ] || return 1
 
-  # Verify bundle id
   local bid
   bid="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist" 2>/dev/null || true)"
   [ "$bid" = "$ALGORA1_BUNDLE_ID" ] || return 1
 
-  # Verify executable name
   local bexe
   bexe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist" 2>/dev/null || true)"
   [ "$bexe" = "algora1" ] || return 1
 
-  # Verify our launcher contains the expected command (basic sanity)
   grep -q 'do script "algora1"' "$exe" 2>/dev/null || return 1
 
   return 0
 }
 
 ensure_macos_app_bundle_present() {
-  # Create the app if missing OR not trusted
   local icns_path="${1:-}"
   local app_root="${HOME}/Applications/algora1.app"
   local desktop_app="${HOME}/Desktop/algora1.app"
 
-  # Prefer ~/Applications location
   if is_trusted_algora1_app_bundle "$app_root"; then
     ui_ok "macOS app bundle already present: $app_root"
     return 0
   fi
 
-  # Some users may have dragged it to Desktop; accept only if trusted
   if is_trusted_algora1_app_bundle "$desktop_app"; then
     ui_ok "macOS app bundle already present: $desktop_app"
     return 0
@@ -482,13 +438,11 @@ ensure_macos_app_bundle_present() {
   ui_info "Creating macOS Dock app (algora1.app)…"
   install_macos_app_bundle "$icns_path"
 
-  # Re-check to confirm creation worked
   if ! is_trusted_algora1_app_bundle "$app_root"; then
     ui_warn "App bundle creation ran, but bundle did not validate. Check permissions: ~/Applications"
     return 1
   fi
 
-  # Optional: also place a copy on Desktop (only if Desktop doesn't already have a trusted one)
   if ! is_trusted_algora1_app_bundle "$desktop_app"; then
     cp -R "$app_root" "$desktop_app" >/dev/null 2>&1 || true
   fi
@@ -498,10 +452,8 @@ ensure_macos_app_bundle_present() {
 
 
 install_macos_app_bundle() {
-  # Creates ~/Applications/algora1.app that runs ~/.local/bin/algora1 in Terminal
-  # Uses an .icns icon if provided (local path).
 
-  local icns_path="${1:-}"   # optional local path to .icns
+  local icns_path="${1:-}" 
   local app_root="${HOME}/Applications/algora1.app"
   local contents="${app_root}/Contents"
   local macos_dir="${contents}/MacOS"
@@ -509,7 +461,6 @@ install_macos_app_bundle() {
 
   mkdir -p "${macos_dir}" "${res_dir}"
 
-  # --- Launcher executable (opens Terminal and runs algora1) ---
   cat > "${macos_dir}/algora1" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -527,7 +478,6 @@ OSA
 EOF
   chmod +x "${macos_dir}/algora1"
 
-  # --- Info.plist (sets Dock icon + app metadata) ---
   cat > "${contents}/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -547,29 +497,22 @@ EOF
 </plist>
 EOF
 
-  # PkgInfo is optional but harmless
   printf "APPL????" > "${contents}/PkgInfo" || true
 
-  # --- Icon (auto) ---
   local resolved_icns=""
   resolved_icns="$(ensure_algora1_icns "${icns_path:-}" || true)"
   if [ -n "$resolved_icns" ] && [ -f "$resolved_icns" ]; then
     cp "$resolved_icns" "${res_dir}/algora1.icns"
   fi
 
-  # Mark this bundle as generated by this installer (prevents trusting random same-named apps)
   printf "generated-by=algora1-installer\n" > "${res_dir}/.algora1_generated" || true
 
   ui_ok "macOS app created: ${app_root}"
   ui_info "Tip: drag 'algora1.app' into your Dock. First run may require right-click → Open."
 
-  # Reveal in Finder so user can drag to Dock
   open -R "${app_root}" >/dev/null 2>&1 || true
 }
 
-# -------------------------
-# CLI subcommands (run and exit)
-# -------------------------
 if [ "${1:-}" = "--install-local" ]; then
   ensure_gum || true
   ui_header
@@ -579,23 +522,16 @@ if [ "${1:-}" = "--install-local" ]; then
     install_linux_desktop_shortcut "https://static.wixstatic.com/media/ce61ee_00cd47ee0f9c48f69f0f7546f4298188~mv2.png"
   fi
 
-  # macOS Dock icon app bundle
   if [ "$(detect_os)" = "macos" ]; then
-    # Provide your icon path via env var, e.g. ALGORA1_ICNS_PATH="$HOME/Desktop/algora1.icns"
     install_macos_app_bundle "${ALGORA1_ICNS_PATH:-}"
   fi
 
   exit 0
 fi
 
-# =========================
-# FAST PATH: if instance exists, go straight to control panel
-# =========================
 fast_path_to_control_panel_if_ready() {
-  # Only works after PROJECT_ID/ZONE are known and gcloud auth is ready
   instance_exists || return 1
 
-  # If the VM isn't running yet, do normal flow
   local status
   status="$(gcloud compute instances describe "${INSTANCE_NAME}" --zone "${ZONE}" --format="get(status)" 2>/dev/null || true)"
   [ "$status" = "RUNNING" ] || return 1
@@ -610,7 +546,6 @@ fast_path_to_control_panel_if_ready() {
   ssh-keygen -R "${ip}" >/dev/null 2>&1 || true
   wait_for_ssh_ready "${ip}"
 
-  # If control panel not installed yet, install it (best-effort)
   local key_path="${HOME}/.ssh/${KEY_NAME}"
   ui_info "Updating control panel on VM…"
   install_control_panel_on_vm "${ip}"
@@ -624,9 +559,6 @@ fast_path_to_control_panel_if_ready() {
   ssh_into_instance_menu "${ip}"
 }
 
-# =========================
-# ZIP TRANSFER
-# =========================
 ensure_local_tools_for_zip() {
   need_cmd curl || ui_die "curl is required but not found."
   need_cmd unzip || ui_die "unzip is required but not found. Install unzip and re-run."
@@ -685,14 +617,12 @@ copy_engines_from_wix_to_vm() {
   for name in "${ENGINE_NAMES[@]}"; do
     local dst="${remote_home}/${name}"
 
-    # ✅ FIRST check remote; if present, skip without downloading
     if ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
       "${REMOTE_USER}@${ip}" "test -f '$dst'" >/dev/null 2>&1; then
       ui_ok "${name} already present; skipping"
       continue
     fi
 
-    # Only download if we actually need to upload
     local url
     url="$(zip_url_for_engine "$name")"
     [ -n "${url}" ] || ui_die "No URL set for ${name}"
@@ -718,9 +648,6 @@ copy_engines_from_wix_to_vm() {
   ui_ok "Engine transfer complete"
 }
 
-# =========================
-# CONFIG
-# =========================
 CFG_DIR="${HOME}/.config/algora1_setup"
 CFG_FILE="${CFG_DIR}/config.env"
 
@@ -728,7 +655,6 @@ ensure_cfg_loaded() {
   mkdir -p "${CFG_DIR}"
   chmod 700 "${CFG_DIR}"
   if [ -f "${CFG_FILE}" ]; then
-    # shellcheck disable=SC1090
     source "${CFG_FILE}"
   fi
 }
@@ -752,16 +678,12 @@ EOF
   chmod 600 "${CFG_FILE}"
 }
 
-# =========================
-# GCLOUD
-# =========================
 install_gcloud_macos() {
   ui_info "Installing Google Cloud SDK (gcloud) on macOS…"
   need_cmd brew || ui_die "Homebrew not found. Install Homebrew, or install gcloud manually: https://cloud.google.com/sdk/docs/install"
   brew update >/dev/null
   brew install --cask google-cloud-sdk
   if [ -f "$(brew --prefix)/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.bash.inc" ]; then
-    # shellcheck disable=SC1090
     source "$(brew --prefix)/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.bash.inc"
   fi
 }
@@ -842,9 +764,6 @@ set_project() {
   PROJECT_ID="${pid}"
 }
 
-# =========================
-# PROJECT ID VALIDATION
-# =========================
 print_project_id_requirements() {
   if ui_has_gum; then
     gum style --border rounded --padding "1 2" --border-foreground ${C_WARN} \
@@ -1014,9 +933,6 @@ ensure_project_id_tui() {
   done
 }
 
-# =========================
-# BILLING + COMPUTE API ENABLE
-# =========================
 billing_is_enabled() {
   local project_id="$1"
   local enabled
@@ -1170,9 +1086,6 @@ ensure_ssh_key() {
   ui_ok "SSH key generated"
 }
 
-# =========================
-# VM
-# =========================
 instance_exists() {
   gcloud compute instances describe "${INSTANCE_NAME}" --zone "${ZONE}" >/dev/null 2>&1
 }
@@ -1240,9 +1153,6 @@ wait_for_ssh_ready() {
   ui_die "SSH never became ready."
 }
 
-# =========================
-# CREDENTIALS
-# =========================
 ensure_credentials_tui() {
   ui_step "[8/11] Alpaca configuration"
 
@@ -1334,7 +1244,8 @@ printf "Run: \033[38;5;39malgora1\033[0m\n\n"
 
 printf "\033[1mMain Menu\033[0m\n"
 printf "  • Running sessions\n"
-printf "  • Live portfolio updates\n"
+printf "  • Live Status\n"
+printf "  • Heartbeat Log\n"
 printf "  • Clear log\n"
 printf "  • Exit\n\n"
 
@@ -1347,9 +1258,6 @@ EOF
   ui_ok "Login banner installed"
 }
 
-# =========================
-# VM CONTROL PANEL (post-connect gum menu)
-# =========================
 install_control_panel_on_vm() {
   local ip="$1"
   local key_path="${HOME}/.ssh/${KEY_NAME}"
@@ -1360,7 +1268,6 @@ install_control_panel_on_vm() {
     "${REMOTE_USER}@${ip}" "bash -s" <<'EOF'
 set -euo pipefail
 
-# ---------- helper: install gum on Ubuntu if missing ----------
 has_gum() { command -v gum >/dev/null 2>&1; }
 
 install_gum_if_needed() {
@@ -1381,7 +1288,6 @@ install_gum_if_needed() {
 
 install_gum_if_needed || true
 
-# ---------- /usr/local/bin/algora1-session (runs INSIDE new screen session) ----------
 sudo tee /usr/local/bin/algora1-session >/dev/null <<'SESSION'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1438,11 +1344,9 @@ run_engine_prompt_if_safe() {
   ok "Starting ${engine}…"
   chmod +x "./${engine}" >/dev/null 2>&1 || true
 
-  # ✅ Force-load Alpaca env vars no matter how screen/bash started
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
 
-  # Optional: fail fast with a clear message
   missing=()
   [ -n "${ALPACA_PAPER_API_KEY:-}" ] || missing+=("ALPACA_PAPER_API_KEY")
   [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || missing+=("ALPACA_PAPER_SECRET_KEY")
@@ -1455,7 +1359,6 @@ run_engine_prompt_if_safe() {
   "./${engine}"
 }
 
-# Nice header
 if has_gum; then
   gum style --border rounded --padding "1 2" --border-foreground 39 \
     "$(printf "algora1 session\nOne-session mode enabled")"
@@ -1463,16 +1366,13 @@ else
   echo "algora1 session (one-session mode enabled)"
 fi
 
-# Only prompt if nothing is running on VM
 run_engine_prompt_if_safe || true
 
-# Drop into a normal shell so users can work, detach, etc.
 exec bash -l
 SESSION
 
 sudo chmod +x /usr/local/bin/algora1-session
 
-# ---------- /usr/local/bin/algora1 (main menu) ----------
 sudo tee /usr/local/bin/algora1 >/dev/null <<'MENU'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1512,7 +1412,6 @@ input() {
       --placeholder.foreground 245 \
       --placeholder "" \
       --width 40 1>&2
-    # ^ gum still returns the typed value on stdout, which the caller captures
   else
     printf "%s " "$prompt" >&2
     local v; read -r v
@@ -1539,8 +1438,6 @@ ok()   { printf "✓ %s\n" "$*"; }
 info() { printf "INFO %s\n" "$*"; }
 warn() { printf "WARN %s\n" "$*" >&2; }
 
-# ---- screen session logic (ONE SESSION ONLY) ----
-
 list_sessions_raw() {
   # screen -ls returns exit code 1 when there are no sockets; don't let set -e kill the menu
   command -v screen >/dev/null 2>&1 || return 0
@@ -1565,10 +1462,8 @@ delete_session() {
   local s="$1"
   [ -n "$s" ] || return 0
 
-  # Quit it
   screen -S "$s" -X quit >/dev/null 2>&1 || true
 
-  # Wait until it actually disappears
   for _ in {1..20}; do
     if ! list_sessions_raw | grep -Fxq "$s"; then
       return 0
@@ -1616,6 +1511,16 @@ log_for_engine() {
   esac
 }
 
+live_status_for_engine() {
+  case "$1" in
+    BEXP) echo "bexp_live_status.txt" ;;
+    TSLA) echo "tsla_live_status.txt" ;;
+    NVDA) echo "nvda_live_status.txt" ;;
+    PMNY) echo "pmny_live_status.txt" ;;
+    *) echo "pmny_live_status.txt" ;;
+  esac
+}
+
 detect_running_engine_best_effort() {
   local line
   line="$(pgrep -af '(BEXP|PMNY|TSLA|NVDA)' 2>/dev/null | head -n 1 || true)"
@@ -1628,9 +1533,7 @@ detect_running_engine_best_effort() {
   esac
 }
 
-# ---- UI screens ----
 draw_header_once() {
-  # Clear once, then draw header once
   clear || true
   if has_gum; then
     gum style --border rounded --padding "1 2" --border-foreground 39 \
@@ -1645,7 +1548,6 @@ running_sessions_menu() {
   local cnt
   cnt="$(session_count)"
 
-  # If multiple sessions exist (shouldn't), enforce the rule
   if [ "$cnt" -gt 1 ]; then
     warn "Multiple screen sessions detected (${cnt}). One-session mode requires deleting extras."
     if confirm "Delete ALL sessions now? (recommended)"; then
@@ -1701,7 +1603,7 @@ running_sessions_menu() {
   fi
 }
 
-live_updates_menu() {
+heartbeat_log_menu() {
   local eng
   eng="$(detect_running_engine_best_effort || true)"
 
@@ -1711,7 +1613,7 @@ live_updates_menu() {
     info "Engine detected: $eng"
   else
     local choice
-    choice="$(choose "Live portfolio updates" \
+    choice="$(choose "Heartbeat Log" \
       "bexp_investing.log" \
       "tsla_investing.log" \
       "nvda_investing.log" \
@@ -1724,18 +1626,46 @@ live_updates_menu() {
   touch "$logfile" >/dev/null 2>&1 || true
   info "Tailing: $logfile (Ctrl+C to return)"
 
-  # --- KEY FIX: Ctrl+C should only exit tail, not the whole menu ---
   local old_trap
   old_trap="$(trap -p INT || true)"
-
-  # When user presses Ctrl+C, stop tail and return to menu
   trap 'trap - INT; return 0' INT
 
   tail -f "$logfile"
 
-  # Restore previous INT trap (if any)
   eval "$old_trap" 2>/dev/null || trap - INT
+  return 0
+}
 
+live_status_menu() {
+  local eng
+  eng="$(detect_running_engine_best_effort || true)"
+
+  local file=""
+  if [ -n "$eng" ]; then
+    file="$(live_status_for_engine "$eng")"
+    info "Engine detected: $eng"
+  else
+    local choice
+    choice="$(choose "Live Status" \
+      "bexp_live_status.txt" \
+      "tsla_live_status.txt" \
+      "nvda_live_status.txt" \
+      "pmny_live_status.txt" \
+      "Back")"
+    [ "$choice" = "Back" ] && return 0
+    file="$choice"
+  fi
+
+  touch "$file" >/dev/null 2>&1 || true
+  info "Viewing: $file (Ctrl+C to return)"
+
+  local old_trap
+  old_trap="$(trap -p INT || true)"
+  trap 'trap - INT; return 0' INT
+
+  tail -f "$file"
+
+  eval "$old_trap" 2>/dev/null || trap - INT
   return 0
 }
 
@@ -1775,13 +1705,15 @@ main_loop() {
     local selection
     selection="$(choose "Select an option" \
       "Running sessions" \
-      "Live portfolio updates" \
+      "Live Status" \
+      "Heartbeat Log" \
       "Clear log" \
       "Exit")"
 
     case "$selection" in
       "Running sessions") running_sessions_menu ;;
-      "Live portfolio updates") live_updates_menu ;;
+      "Live Status") live_status_menu ;;
+      "Heartbeat Log") heartbeat_log_menu ;;
       "Clear log") clear_log_menu ;;
       "Exit") exit 0 ;;
       *) exit 0 ;;
@@ -1794,7 +1726,6 @@ MENU
 
 sudo chmod +x /usr/local/bin/algora1
 
-# Optional: ensure screen is installed
 if ! command -v screen >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update -y >/dev/null 2>&1 || true
@@ -1822,9 +1753,6 @@ ssh_into_instance() {
     "${REMOTE_USER}@${ip}"
 }
 
-# =========================
-# INSTALL PLAN + COMPLETION (list style, no box)
-# =========================
 install_plan_confirm() {
   ui_step "[6/11] Install plan"
 
@@ -1859,9 +1787,6 @@ completion_screen() {
   esac
 }
 
-# =========================
-# MAIN (full 1–11 flow)
-# =========================
 main() {
   ensure_gum
   ui_header
@@ -1870,14 +1795,10 @@ main() {
   ensure_cfg_loaded
   ensure_defaults
 
-  # Ensure local CLI exists + ensure PATH is persisted (macOS)
   if [ "$(detect_os)" = "macos" ]; then
     install_local_cli
   fi
 
-
-
-  # macOS Dock app should exist even if we fast-path into SSH later
   if [ "$(detect_os)" = "macos" ]; then
     ensure_macos_app_bundle_present "${ALGORA1_ICNS_PATH:-}" || true
   fi
@@ -1889,7 +1810,6 @@ main() {
 
   save_cfg
 
-  # ✅ If algora1 already exists, skip installer + jump to menu
   fast_path_to_control_panel_if_ready || true
 
 
