@@ -1532,7 +1532,7 @@ clear_logs_menu() {
   [ "$choice" = "Back" ] && return 0
 
   if [ "$choice" = "Clear all logs" ]; then
-    if confirm "Clear ALL investing logs?"; then
+    if confirm "Clear all investing logs?"; then
       : > "bexp_investing.log" 2>/dev/null || true
       : > "tsla_investing.log" 2>/dev/null || true
       : > "nvda_investing.log" 2>/dev/null || true
