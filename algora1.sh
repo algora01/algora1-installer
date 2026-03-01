@@ -1423,8 +1423,11 @@ has_gum() { command -v gum >/dev/null 2>&1; }
 print_engine_blurbs() {
   cat >&2 <<'EOT'
 BEXP — Diversified Tesla and NVIDIA engine with real-time risk controls.
+
 PMNY — Paper-trading BEXP for risk-free testing.
+
 TSLA — Tesla engine with signal-based deployment and downside controls.
+
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 EOT
 }
@@ -1537,43 +1540,49 @@ has_gum() { command -v gum >/dev/null 2>&1; }
 # ----------------------------
 _stty_saved=""
 
-ui_lock_input() {
-  # Save tty state and disable echo (so typing doesn't print)
+ui_save_tty() {
   _stty_saved="$(stty -g 2>/dev/null || true)"
-  stty -echo 2>/dev/null || true
-
-  # Drain any buffered input
-  while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
 }
 
-ui_unlock_input() {
-  # Drain again before restoring (prevents spill into menus)
-  while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
-
-  # Restore tty
+ui_restore_tty() {
   if [ -n "${_stty_saved}" ]; then
-    stty "${_stty_saved}" 2>/dev/null || stty echo 2>/dev/null || true
+    stty "${_stty_saved}" 2>/dev/null || true
   else
-    stty echo 2>/dev/null || true
+    stty sane 2>/dev/null || true
   fi
 }
 
+ui_drain_input() {
+  # Non-blocking: discard pending keys
+  while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
+}
+
+ui_view_mode_on() {
+  # Disable local echo + disable line buffering so keys don't appear
+  ui_save_tty
+  stty -echo -icanon time 0 min 0 2>/dev/null || true
+  ui_drain_input
+  cursor_hide
+}
+
+ui_view_mode_off() {
+  ui_drain_input
+  ui_restore_tty
+  cursor_show
+}
+
 ui_wait_enter_only() {
-  # Ignore ALL keys except Enter; no echo; no buffering
-  ui_lock_input
+  # For centered message screens: ignore ALL keys except Enter
+  ui_view_mode_on
   local _k=""
   while true; do
     IFS= read -r -s -n 1 _k 2>/dev/null || true
     if [ "${_k}" = $'\n' ] || [ "${_k}" = $'\r' ]; then
       break
     fi
+    # discard everything else
   done
-  ui_unlock_input
-}
-
-ui_drain_input() {
-  # Non-blocking: discard any queued keys (so they never spill into menus)
-  while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
+  ui_view_mode_off
 }
 
 hard_clear() {
@@ -1914,8 +1923,6 @@ live_status_menu() {
   if [ -z "$eng" ]; then
     hard_clear
     center_box $'No active engine detected.\n\nPress Enter to return to the menu.'
-    cursor_show
-    # Wait for Enter
     ui_wait_enter_only
     hard_clear
     return 0
@@ -1924,11 +1931,15 @@ live_status_menu() {
   # 3) If engine exists, do the live tail loop like before
   local stop=0
   trap 'stop=1' INT
+  ui_view_mode_on
+
+  # Safety: if SSH drops or the script is terminated, restore tty + cursor
+  trap 'trap - INT TERM HUP; ui_view_mode_off; exit 0' TERM HUP
 
   while true; do
     if [ "$stop" -eq 1 ]; then
-      trap - INT
-      cursor_show
+      trap - INT TERM HUP
+      ui_view_mode_off
       echo ""
       return 0
     fi
@@ -1936,11 +1947,12 @@ live_status_menu() {
     # Re-detect engine each tick; if it stops, show centered message + Enter to return
     eng="$(detect_running_engine_best_effort || true)"
     if [ -z "$eng" ]; then
-      trap - INT
+      trap - INT TERM HUP
+      ui_view_mode_off     # <-- IMPORTANT: restore original tty BEFORE message screen
+
       hard_clear
       center_box $'Engine stopped.\n\nPress Enter to return to the menu.'
-      cursor_show
-      ui_wait_enter_only
+      ui_wait_enter_only   # this will temporarily lock input again, then restore
       hard_clear
       return 0
     fi
@@ -1982,6 +1994,7 @@ troubleshoot_menu() {
   # Ctrl+C should return to menu (not exit SSH)
   local stop=0
   trap 'stop=1' INT
+  ui_view_mode_on
   ui_drain_input
 
   while true; do
@@ -2003,7 +2016,7 @@ troubleshoot_menu() {
     # If user hit Ctrl+C, return to menu
     if [ "$stop" -eq 1 ]; then
       trap - INT
-      cursor_show
+      ui_view_mode_off
       echo ""
       return 0
     fi
