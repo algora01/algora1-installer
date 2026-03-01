@@ -1422,10 +1422,10 @@ has_gum() { command -v gum >/dev/null 2>&1; }
 
 print_engine_blurbs() {
   cat >&2 <<'EOT'
-BEXP — TSLA+NVDA diversified; full deployment with real-time risk controls.
-PMNY — Paper BEXP; same signals & monitoring for risk-free testing.
-TSLA — Tesla-only; deploy on bullish signals, cut fast on weakness + stops.
-NVDA — NVIDIA-only; deploy on bullish signals, cut fast on weakness + stops.
+BEXP — Diversified Tesla and NVIDIA engine with real-time risk controls.
+PMNY — Paper-trading BEXP for risk-free testing.
+TSLA — Tesla engine with signal-based deployment and downside controls.
+NVDA — NVIDIA engine with signal-based deployment and downside controls.
 EOT
 }
 
@@ -1531,6 +1531,50 @@ set -euo pipefail
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
+
+# ----------------------------
+# Keyboard / input management
+# ----------------------------
+_stty_saved=""
+
+ui_lock_input() {
+  # Save tty state and disable echo (so typing doesn't print)
+  _stty_saved="$(stty -g 2>/dev/null || true)"
+  stty -echo 2>/dev/null || true
+
+  # Drain any buffered input
+  while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
+}
+
+ui_unlock_input() {
+  # Drain again before restoring (prevents spill into menus)
+  while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
+
+  # Restore tty
+  if [ -n "${_stty_saved}" ]; then
+    stty "${_stty_saved}" 2>/dev/null || stty echo 2>/dev/null || true
+  else
+    stty echo 2>/dev/null || true
+  fi
+}
+
+ui_wait_enter_only() {
+  # Ignore ALL keys except Enter; no echo; no buffering
+  ui_lock_input
+  local _k=""
+  while true; do
+    IFS= read -r -s -n 1 _k 2>/dev/null || true
+    if [ "${_k}" = $'\n' ] || [ "${_k}" = $'\r' ]; then
+      break
+    fi
+  done
+  ui_unlock_input
+}
+
+ui_drain_input() {
+  # Non-blocking: discard any queued keys (so they never spill into menus)
+  while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
+}
 
 hard_clear() {
   # Clear screen + scrollback so the header box always starts at the top
@@ -1872,7 +1916,7 @@ live_status_menu() {
     center_box $'No active engine detected.\n\nPress Enter to return to the menu.'
     cursor_show
     # Wait for Enter
-    read -r _ || true
+    ui_wait_enter_only
     hard_clear
     return 0
   fi
@@ -1896,7 +1940,7 @@ live_status_menu() {
       hard_clear
       center_box $'Engine stopped.\n\nPress Enter to return to the menu.'
       cursor_show
-      read -r _ || true
+      ui_wait_enter_only
       hard_clear
       return 0
     fi
@@ -1907,6 +1951,7 @@ live_status_menu() {
     hard_clear
     touch "$file" >/dev/null 2>&1 || true
     cat "$file" 2>/dev/null || echo "(no status yet)"
+    ui_drain_input
     sleep 1 || true
   done
 }
@@ -1937,6 +1982,7 @@ troubleshoot_menu() {
   # Ctrl+C should return to menu (not exit SSH)
   local stop=0
   trap 'stop=1' INT
+  ui_drain_input
 
   while true; do
     # IMPORTANT:
@@ -1952,6 +1998,7 @@ troubleshoot_menu() {
       | awk -v d="$today" 'index($0, d) == 1 { print; fflush() }'
     local rc=$?
     set -e
+    ui_drain_input
 
     # If user hit Ctrl+C, return to menu
     if [ "$stop" -eq 1 ]; then
