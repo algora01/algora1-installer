@@ -36,6 +36,16 @@ logq() { [ "${QUIET}" = "1" ] || log "$@"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
 die()  { printf "\n\033[1;31m[error]\033[0m %s\n" "$*" >&2; exit 1; }
 
+print_engine_blurbs() {
+  # Print to stderr so it doesn't interfere with gum choose capturing stdout
+  cat >&2 <<'EOT'
+BEXP — TSLA+NVDA diversified; full deployment with real-time risk controls.
+PMNY — Paper BEXP; same signals & monitoring for risk-free testing.
+TSLA — Tesla-only; deploy on bullish signals, cut fast on weakness + stops.
+NVDA — NVIDIA-only; deploy on bullish signals, cut fast on weakness + stops.
+EOT
+}
+
 C_ACCENT=39      
 C_CURSOR=33      
 C_OK=40          
@@ -1486,9 +1496,12 @@ if has_gum; then
   gum style --border rounded --padding "1 2" --border-foreground 39 \
     "$(printf "ALGORA1 session — One-session mode\nSelect engine")" >&2
 else
-  echo "ALGORA1 session — One-session mode"
+  echo "ALGORA1 session — One-session mode" >&2
 fi
-echo ""
+echo "" >&2
+
+print_engine_blurbs
+echo "" >&2
 
 if run_engine_prompt_if_safe; then
   # Engine ran (or we intentionally stayed), keep an interactive shell
