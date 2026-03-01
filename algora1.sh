@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f96b52d319e4447fae7fb7bb4460c0b0.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_cf0acae47ecf4f3d8764b9c30c3ceb97.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e37337008be44d74a58578f8a6cb0011.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_2657f002a73947fc9e646281c30780f9.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1bc76956dfd14d669b306e9637e54460.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c2bf1a20aaa648ff92da357e4677cb8c.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_bcdaaaaf147d4387b2fc35eacc5d9334.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c1f45e0bfcb64e3d9d75ff3043bde41c.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -46,6 +46,7 @@ TSLA — Tesla engine with signal-based deployment and downside controls.
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
+
 EOT
 }
 
@@ -1432,6 +1433,7 @@ TSLA — Tesla engine with signal-based deployment and downside controls.
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
+
 EOT
 }
 
