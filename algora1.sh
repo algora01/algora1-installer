@@ -1500,20 +1500,7 @@ run_engine_prompt_if_safe() {
     return 0
   fi
 
-  # Disable local echo while engine runs so arrow keys / random typing never prints
-  local _stty_saved=""
-  _stty_saved="$(stty -g 2>/dev/null || true)"
-  stty -echo 2>/dev/null || true
-
   "./${engine}"
-
-  # Restore tty so if the engine exits, the shell is usable
-  if [ -n "${_stty_saved}" ]; then
-    stty "${_stty_saved}" 2>/dev/null || true
-  else
-    stty sane 2>/dev/null || true
-  fi
-
   return 0
 }
 
@@ -1576,7 +1563,7 @@ ui_drain_input() {
 ui_view_mode_on() {
   # Disable local echo + disable line buffering so keys don't appear
   ui_save_tty
-  stty -echo -icanon min 1 time 0 2>/dev/null || true
+  stty -echo -icanon time 0 min 0 2>/dev/null || true
   ui_drain_input
   cursor_hide
 }
