@@ -1561,11 +1561,11 @@ ui_drain_input() {
 }
 
 ui_view_mode_on() {
-  # Disable local echo + disable line buffering so keys don't appear
   ui_save_tty
   stty -echo -icanon time 0 min 0 2>/dev/null || true
   ui_drain_input
   cursor_hide
+  printf '\033[?25l' 2>/dev/null || true
 }
 
 ui_view_mode_off() {
@@ -1575,17 +1575,24 @@ ui_view_mode_off() {
 }
 
 ui_wait_enter_only() {
-  # For centered message screens: ignore ALL keys except Enter
-  ui_view_mode_on
+  # Wait for Enter ONLY (blocking), with no echo and no visible cursor.
+  # IMPORTANT: min 1 makes read block for a keypress.
+  ui_save_tty
+  stty -echo -icanon time 0 min 1 2>/dev/null || true
+  ui_drain_input
+  cursor_hide
+
   local _k=""
   while true; do
     IFS= read -r -s -n 1 _k 2>/dev/null || true
     if [ "${_k}" = $'\n' ] || [ "${_k}" = $'\r' ]; then
       break
     fi
-    # discard everything else
+    # ignore everything else
   done
-  ui_view_mode_off
+
+  ui_restore_tty
+  cursor_show
 }
 
 hard_clear() {
@@ -1964,8 +1971,10 @@ live_status_menu() {
     file="$(live_status_for_engine "$eng")"
 
     hard_clear
+    cursor_hide
     touch "$file" >/dev/null 2>&1 || true
     cat "$file" 2>/dev/null || echo "(no status yet)"
+    cursor_hide
     ui_drain_input
     sleep 1 || true
   done
@@ -1975,48 +1984,40 @@ troubleshoot_menu() {
   local eng
   eng="$(detect_running_engine_best_effort || true)"
 
-  local logfile=""
-  if [ -n "$eng" ]; then
-    logfile="$(log_for_engine "$eng")"
-    info "Engine detected: $eng"
-  else
-    local choice
-    choice="$(choose "System Activity" \
-      "bexp_investing.log" \
-      "tsla_investing.log" \
-      "nvda_investing.log" \
-      "pmny_investing.log" \
-      "Back")"
-    [ "$choice" = "Back" ] && return 0
-    logfile="$choice"
+  # If none running: show centered screen and return on Enter (no typing, no cursor)
+  if [ -z "$eng" ]; then
+    hard_clear
+    center_box $'No active engine detected.\n\nPress Enter to return to the menu.'
+    ui_wait_enter_only
+    hard_clear
+    return 0
   fi
+
+  # If engine running, tail that engine's log like before
+  local logfile=""
+  logfile="$(log_for_engine "$eng")"
+  info "Engine detected: $eng"
 
   touch "$logfile" >/dev/null 2>&1 || true
   info "Tailing: $logfile (Ctrl+C to return)"
 
-  # Ctrl+C should return to menu (not exit SSH)
   local stop=0
   trap 'stop=1' INT
   ui_view_mode_on
   ui_drain_input
 
   while true; do
-    # IMPORTANT:
-    # tail will exit with code 130 on Ctrl+C.
-    # With "set -e", that would kill the whole script unless we neutralize it.
     set +e
     local secs today
     secs="$(secs_until_midnight_et)"
     today="$(TZ=America/New_York date +%F)"
 
-    # Show only today's lines (ET). Auto-stops at ET midnight so the loop restarts with new date.
     timeout "$secs" tail -n 200 -F "$logfile" 2>/dev/null \
       | awk -v d="$today" 'index($0, d) == 1 { print; fflush() }'
     local rc=$?
     set -e
     ui_drain_input
 
-    # If user hit Ctrl+C, return to menu
     if [ "$stop" -eq 1 ]; then
       trap - INT
       ui_view_mode_off
@@ -2024,7 +2025,6 @@ troubleshoot_menu() {
       return 0
     fi
 
-    # If tail stopped for another reason (log rotated, file moved, etc), restart it
     sleep 0.2 || true
   done
 }
