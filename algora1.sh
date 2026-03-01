@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e947544362764443a0798c8f9979907a.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_39478680c61b4e6e8bccdbb4a17f3d8f.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3553d4354ec34a7e97919f2f294da04f.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_921bb862344f4f95b3724fc85bcd814f.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f96b52d319e4447fae7fb7bb4460c0b0.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_cf0acae47ecf4f3d8764b9c30c3ceb97.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e37337008be44d74a58578f8a6cb0011.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_2657f002a73947fc9e646281c30780f9.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1575,24 +1575,19 @@ ui_view_mode_off() {
 }
 
 ui_wait_enter_only() {
-  # Wait for Enter ONLY (blocking), with no echo and no visible cursor.
-  # IMPORTANT: min 1 makes read block for a keypress.
+  # Robust "Press Enter" wait: canonical input, but echo disabled (so nothing shows).
   ui_save_tty
-  stty -echo -icanon time 0 min 1 2>/dev/null || true
+  stty -echo icanon 2>/dev/null || true
   ui_drain_input
   cursor_hide
 
-  local _k=""
-  while true; do
-    IFS= read -r -s -n 1 _k 2>/dev/null || true
-    if [ "${_k}" = $'\n' ] || [ "${_k}" = $'\r' ]; then
-      break
-    fi
-    # ignore everything else
-  done
+  # Wait for Enter (user may type junk; it won't display)
+  local _line=""
+  IFS= read -r _line 2>/dev/null || true
 
   ui_restore_tty
   cursor_show
+  ui_drain_input
 }
 
 hard_clear() {
