@@ -39,10 +39,13 @@ die()  { printf "\n\033[1;31m[error]\033[0m %s\n" "$*" >&2; exit 1; }
 print_engine_blurbs() {
   # Print to stderr so it doesn't interfere with gum choose capturing stdout
   cat >&2 <<'EOT'
-BEXP — TSLA+NVDA diversified; full deployment with real-time risk controls.
-PMNY — Paper BEXP; same signals & monitoring for risk-free testing.
-TSLA — Tesla-only; deploy on bullish signals, cut fast on weakness + stops.
-NVDA — NVIDIA-only; deploy on bullish signals, cut fast on weakness + stops.
+BEXP — Diversified Tesla and NVIDIA engine with real-time risk controls.
+
+TSLA — Tesla engine with signal-based deployment and downside controls.
+
+NVDA — NVIDIA engine with signal-based deployment and downside controls.
+
+PMNY — Paper-trading BEXP for risk-free testing.
 EOT
 }
 
@@ -1424,11 +1427,11 @@ print_engine_blurbs() {
   cat >&2 <<'EOT'
 BEXP — Diversified Tesla and NVIDIA engine with real-time risk controls.
 
-PMNY — Paper-trading BEXP for risk-free testing.
-
 TSLA — Tesla engine with signal-based deployment and downside controls.
 
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
+
+PMNY — Paper-trading BEXP for risk-free testing.
 EOT
 }
 
@@ -1878,9 +1881,9 @@ running_sessions_menu() {
     create_new_session "$name"
 
     hard_clear
-    cursor_hide
+    ui_view_mode_on
     screen -r "$name" || true
-    cursor_show
+    ui_view_mode_off
     hard_clear
     return 0
 
@@ -1895,9 +1898,9 @@ running_sessions_menu() {
     case "$action" in
       "Connect")
         hard_clear
-        cursor_hide
+        ui_view_mode_on
         screen -r "$s_raw" || true
-        cursor_show
+        ui_view_mode_off
         hard_clear
         return 0
         ;;
