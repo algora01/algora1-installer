@@ -1420,6 +1420,15 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
+print_engine_blurbs() {
+  cat >&2 <<'EOT'
+BEXP — TSLA+NVDA diversified; full deployment with real-time risk controls.
+PMNY — Paper BEXP; same signals & monitoring for risk-free testing.
+TSLA — Tesla-only; deploy on bullish signals, cut fast on weakness + stops.
+NVDA — NVIDIA-only; deploy on bullish signals, cut fast on weakness + stops.
+EOT
+}
+
 choose() {
   local title="$1"; shift
   if has_gum; then
