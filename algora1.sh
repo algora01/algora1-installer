@@ -1421,6 +1421,10 @@ sudo tee /usr/local/bin/algora1-session >/dev/null <<'SESSION'
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "${TERM:-}" in
+  screen|screen-bce) export TERM="screen-256color" ;;
+esac
+
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
@@ -1464,10 +1468,18 @@ info() { printf "INFO %s\n" "$*"; }
 warn() { printf "WARN %s\n" "$*" >&2; }
 
 engine_running_anywhere() {
-  # Detect a running engine process on the VM (best-effort)
-  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
-  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
-  return 1
+  # Detect real engine executables only (argv[0] basename), not symbol args.
+  ps -eo args= 2>/dev/null | awk '
+    {
+      cmd=$1
+      sub(/^.*\//, "", cmd)
+      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA") {
+        found=1
+        exit 0
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  '
 }
 
 run_engine_prompt_if_safe() {
@@ -1564,7 +1576,7 @@ TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
 DOT = "·"
 HIDOT = "+"
 WIDTH = 80
-HEIGHT = 24
+HEIGHT = TOP_PAD + PLOT_H + 1 + BOTTOM_PAD  # 23 rows exactly, like line.py
 
 ACCENT = "\033[38;5;39m"
 MUTED = "\033[38;5;245m"
@@ -1643,11 +1655,36 @@ def fetch_intraday_bars(sym: str):
     if not points:
         return None, f"No intraday IEX bars yet for {sym}."
 
+    # Pull a fresher print so latest marker can move between 1-min bars.
+    latest_price = None
+    trade_url = "https://data.alpaca.markets/v2/stocks/trades/latest?" + urllib.parse.urlencode({
+        "symbols": sym,
+        "feed": "iex",
+    })
+    trade_req = urllib.request.Request(
+        trade_url,
+        headers={
+            "APCA-API-KEY-ID": key,
+            "APCA-API-SECRET-KEY": secret,
+            "accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(trade_req, timeout=5) as resp:
+            t_payload = json.loads(resp.read().decode("utf-8"))
+            trade = t_payload.get("trades", {}).get(sym, {})
+            p = trade.get("p")
+            if p is not None:
+                latest_price = float(p)
+    except Exception:
+        latest_price = None
+
     return {
         "day": day,
         "start": start,
         "plot_end": regular_close,  # fixed session axis
         "points": points,
+        "latest_price": latest_price,
     }, None
 
 def y_to_row(v: float, ymin: float, ymax: float) -> int:
@@ -1685,21 +1722,20 @@ def render_error(msg: str):
     mstart = max(0, (WIDTH - len(text)) // 2)
     lines[11] = (" " * mstart + text)[:WIDTH].ljust(WIDTH)
 
-    hint = "Press Enter or Ctrl+C to return"
-    lines[HEIGHT - 1] = f"{MUTED}{hint.ljust(WIDTH)}{RESET}"
-    sys.stdout.write("\n".join(lines) + "\n")
+    sys.stdout.write("\n".join(lines))
 
 def render_chart(data):
     start = data["start"]
     plot_end = data["plot_end"]
     points = data["points"]
+    latest_price = data.get("latest_price")
 
     session_points = [p for p in points if p[0] <= plot_end]
     if not session_points:
         session_points = [(start, points[0][1])]
 
     y = sample_points(session_points, start, plot_end)
-    last_price = points[-1][1]
+    last_price = float(latest_price) if latest_price is not None else points[-1][1]
     ymin, ymax = min(min(y), last_price), max(max(y), last_price)
     if ymax == ymin:
         ymax += 0.5
@@ -1778,14 +1814,12 @@ def render_chart(data):
                 row_chars.append(ch)
         lines.append("".join(row_chars))
 
-    if len(lines) < HEIGHT - 1:
-        lines.extend([" " * WIDTH for _ in range((HEIGHT - 1) - len(lines))])
+    if len(lines) < HEIGHT:
+        lines.extend([" " * WIDTH for _ in range(HEIGHT - len(lines))])
     else:
-        lines = lines[:HEIGHT - 1]
+        lines = lines[:HEIGHT]
 
-    hint = "Press Enter or Ctrl+C to return"
-    lines.append(f"{MUTED}{hint.ljust(WIDTH)}{RESET}")
-    sys.stdout.write("\n".join(lines) + "\n")
+    sys.stdout.write("\n".join(lines))
 
 data, err = fetch_intraday_bars(symbol)
 if err:
@@ -1801,6 +1835,10 @@ sudo chmod +x /usr/local/bin/algora1-live-chart
 sudo tee /usr/local/bin/algora1 >/dev/null <<'MENU'
 #!/usr/bin/env bash
 set -euo pipefail
+
+case "${TERM:-}" in
+  screen|screen-bce) export TERM="screen-256color" ;;
+esac
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
@@ -2065,7 +2103,7 @@ connect_only_session() {
 
 create_new_session() {
   local name="$1"
-  screen -S "$name" -dm bash -lc "cd \$HOME && exec /usr/local/bin/algora1-session"
+  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session"
 }
 
 engine_running_anywhere() {
@@ -2096,15 +2134,19 @@ live_status_for_engine() {
 }
 
 detect_running_engine_best_effort() {
-  local line
-  line="$(pgrep -af '(BEXP|PMNY|TSLA|NVDA)' 2>/dev/null | head -n 1 || true)"
-  case "$line" in
-    *BEXP*) echo "BEXP" ;;
-    *TSLA*) echo "TSLA" ;;
-    *NVDA*) echo "NVDA" ;;
-    *PMNY*) echo "PMNY" ;;
-    *) echo "" ;;
-  esac
+  # Match only executable basename (argv[0]), so plain "TSLA" args don't count.
+  ps -eo args= 2>/dev/null | awk '
+    {
+      cmd=$1
+      sub(/^.*\//, "", cmd)
+      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY") {
+        print cmd
+        found=1
+        exit 0
+      }
+    }
+    END { if (!found) print "" }
+  '
 }
 
 draw_header_once() {
@@ -2245,6 +2287,17 @@ live_status_menu() {
 }
 
 live_charts_menu() {
+  local eng
+  eng="$(detect_running_engine_best_effort || true)"
+
+  if [ -z "$eng" ]; then
+    hard_clear
+    center_box $'No active engine detected.\n\nPress Enter to return to the menu.'
+    ui_wait_enter_only
+    hard_clear
+    return 0
+  fi
+
   local pick symbol
   pick="$(choose "Live Charts" "Tesla, Inc. (TSLA)" "NVIDIA Corporation (NVDA)" "Back")"
   case "$pick" in
@@ -2276,9 +2329,10 @@ live_charts_menu() {
     cursor_hide
 
     # Ignore all keys except Enter; Ctrl+C is handled by trap.
-    local key=""
-    IFS= read -r -s -n 1 -t 0.4 key < /dev/tty || true
-    if [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
+    local key="" rc=0
+    IFS= read -r -s -n 1 -t 0.6 key < /dev/tty
+    rc=$?
+    if [ "$rc" -eq 0 ] && { [ -z "$key" ] || [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; }; then
       trap - INT TERM HUP
       ui_view_mode_off
       hard_clear
