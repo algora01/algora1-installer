@@ -1556,7 +1556,6 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-TITLE_W = 80
 PLOT_W, PLOT_H = 70, 18
 LEFT_PAD = 9
 BOTTOM_PAD = 2
@@ -1564,6 +1563,12 @@ TOP_PAD = 2
 TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
 DOT = "·"
 HIDOT = "+"
+WIDTH = 80
+HEIGHT = 24
+
+ACCENT = "\033[38;5;39m"
+MUTED = "\033[38;5;245m"
+RESET = "\033[0m"
 
 symbol = sys.argv[1].upper()
 
@@ -1594,15 +1599,15 @@ def fetch_intraday_bars(sym: str):
     regular_close = datetime.combine(day, time(16, 0), tzinfo=ET)
     after_close = datetime.combine(day, time(20, 0), tzinfo=ET)
 
-    end = now_et if now_et.date() == day else after_close
-    if end < start:
-        end = regular_close
+    fetch_end = now_et if now_et.date() == day else after_close
+    if fetch_end < start:
+        fetch_end = regular_close
 
     params = {
         "symbols": sym,
         "timeframe": "1Min",
         "start": iso_z(start),
-        "end": iso_z(end),
+        "end": iso_z(fetch_end),
         "adjustment": "raw",
         "feed": "iex",
         "sort": "asc",
@@ -1638,11 +1643,10 @@ def fetch_intraday_bars(sym: str):
     if not points:
         return None, f"No intraday IEX bars yet for {sym}."
 
-    range_end = max(points[-1][0], regular_close)
     return {
         "day": day,
         "start": start,
-        "end": range_end,
+        "plot_end": regular_close,  # fixed session axis
         "points": points,
     }, None
 
@@ -1651,8 +1655,8 @@ def y_to_row(v: float, ymin: float, ymax: float) -> int:
         return 0
     return int((ymax - v) / (ymax - ymin) * (PLOT_H - 1))
 
-def sample_points(points, start: datetime, end: datetime):
-    total = (end - start).total_seconds()
+def sample_points(points, start: datetime, plot_end: datetime):
+    total = (plot_end - start).total_seconds()
     if total <= 0:
         return [points[-1][1]] * PLOT_W
 
@@ -1671,25 +1675,32 @@ def put_label(canvas, row: int, text: str):
     for k, ch in enumerate(s):
         canvas[row][k] = ch
 
-def col_for_clock(day: date, start: datetime, end: datetime, hh: int, mm: int) -> int:
-    t = datetime.combine(day, time(hh, mm), tzinfo=ET)
-    if end <= start:
-        return 0
-    if t <= start:
-        return 0
-    if t >= end:
-        return PLOT_W - 1
-    ratio = (t - start).total_seconds() / (end - start).total_seconds()
-    return int(ratio * (PLOT_W - 1))
+def render_error(msg: str):
+    lines = [" " * WIDTH for _ in range(HEIGHT)]
+    title = f"LIVE CHARTS ({symbol})"
+    tstart = max(0, (WIDTH - len(title)) // 2)
+    lines[0] = (" " * tstart + title)[:WIDTH].ljust(WIDTH)
+
+    text = msg[:WIDTH - 6]
+    mstart = max(0, (WIDTH - len(text)) // 2)
+    lines[11] = (" " * mstart + text)[:WIDTH].ljust(WIDTH)
+
+    hint = "Press Enter or Ctrl+C to return"
+    lines[HEIGHT - 1] = f"{MUTED}{hint.ljust(WIDTH)}{RESET}"
+    sys.stdout.write("\n".join(lines) + "\n")
 
 def render_chart(data):
     start = data["start"]
-    end = data["end"]
+    plot_end = data["plot_end"]
     points = data["points"]
-    day = data["day"]
 
-    y = sample_points(points, start, end)
-    ymin, ymax = min(y), max(y)
+    session_points = [p for p in points if p[0] <= plot_end]
+    if not session_points:
+        session_points = [(start, points[0][1])]
+
+    y = sample_points(session_points, start, plot_end)
+    last_price = points[-1][1]
+    ymin, ymax = min(min(y), last_price), max(max(y), last_price)
     if ymax == ymin:
         ymax += 0.5
         ymin -= 0.5
@@ -1724,7 +1735,6 @@ def render_chart(data):
         if is_hi:
             hi_positions.add((r, c))
 
-    last_price = y[-1]
     last_r = plot_top + y_to_row(last_price, ymin, ymax)
     last_c = axis_x + 1 + (PLOT_W - 1)
     canvas[last_r][last_c] = HIDOT
@@ -1737,16 +1747,12 @@ def render_chart(data):
     put_label(canvas, plot_top + (PLOT_H - 1), f"${ymin:.2f}")
 
     ticks = [
-        (col_for_clock(day, start, end, 9, 30), TIME_LABELS[0]),
-        (col_for_clock(day, start, end, 12, 0), TIME_LABELS[1]),
-        (col_for_clock(day, start, end, 16, 0), TIME_LABELS[2]),
+        (0, TIME_LABELS[0]),
+        (PLOT_W // 2, TIME_LABELS[1]),
+        (PLOT_W - 1, TIME_LABELS[2]),
     ]
     label_row = axis_y + 1
-    used = set()
     for col, lab in ticks:
-        if col in used:
-            continue
-        used.add(col)
         tick_c = axis_x + 1 + col
         if axis_x <= tick_c < W:
             canvas[axis_y][tick_c] = "┬"
@@ -1757,37 +1763,33 @@ def render_chart(data):
             for k, ch in enumerate(lab):
                 canvas[label_row][start_col + k] = ch
 
-    title = f"{symbol} Daily Performance (IEX)"
+    title = f"{symbol} Daily Performance"
     title_start = max(0, (W - len(title)) // 2)
     for i, ch in enumerate(title):
         canvas[0][title_start + i] = ch
 
-    accent = "\033[38;5;39m"
-    muted = "\033[38;5;245m"
-    reset = "\033[0m"
-
-    print("".join(["─" for _ in range(TITLE_W)]))
+    lines = []
     for r in range(H):
         row_chars = []
         for c, ch in enumerate(canvas[r]):
             if (r, c) in hi_positions or (r, c) == last_point or (r == last_label_row and 0 <= c < 7):
-                row_chars.append(f"{accent}{ch}{reset}")
+                row_chars.append(f"{ACCENT}{ch}{RESET}")
             else:
                 row_chars.append(ch)
-        print("".join(row_chars))
-    print("")
-    print(f"{muted}Extended hours included when available from Alpaca IEX feed.{reset}")
-    print("".join(["─" for _ in range(TITLE_W)]))
+        lines.append("".join(row_chars))
+
+    if len(lines) < HEIGHT - 1:
+        lines.extend([" " * WIDTH for _ in range((HEIGHT - 1) - len(lines))])
+    else:
+        lines = lines[:HEIGHT - 1]
+
+    hint = "Press Enter or Ctrl+C to return"
+    lines.append(f"{MUTED}{hint.ljust(WIDTH)}{RESET}")
+    sys.stdout.write("\n".join(lines) + "\n")
 
 data, err = fetch_intraday_bars(symbol)
 if err:
-    print("".join(["─" for _ in range(TITLE_W)]))
-    print("")
-    print(f"LIVE CHARTS ({symbol})")
-    print("")
-    print(err)
-    print("")
-    print("".join(["─" for _ in range(TITLE_W)]))
+    render_error(err)
     sys.exit(0)
 
 render_chart(data)
@@ -2243,16 +2245,19 @@ live_status_menu() {
 }
 
 live_charts_menu() {
-  local symbol
-  symbol="$(choose "Live Charts" "TSLA" "NVDA" "Back")"
-  case "$symbol" in
-    TSLA|NVDA) ;;
+  local pick symbol
+  pick="$(choose "Live Charts" "Tesla, Inc. (TSLA)" "NVIDIA Corporation (NVDA)" "Back")"
+  case "$pick" in
+    "Tesla, Inc. (TSLA)") symbol="TSLA" ;;
+    "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
     *) return 0 ;;
   esac
 
   local stop=0
   trap 'stop=1' INT
   ui_view_mode_on
+  hard_clear
+  cursor_hide
 
   # Safety: if SSH drops or the script is terminated, restore tty + cursor
   trap 'trap - INT TERM HUP; ui_view_mode_off; exit 0' TERM HUP
@@ -2265,15 +2270,14 @@ live_charts_menu() {
       return 0
     fi
 
-    hard_clear
+    printf '\033[H' 2>/dev/null || true
     cursor_hide
     /usr/local/bin/algora1-live-chart "$symbol" 2>/dev/null || echo "(unable to load chart)"
-    printf "\n\033[38;5;245mPress Enter or Ctrl+C to return\033[0m\n"
     cursor_hide
 
     # Ignore all keys except Enter; Ctrl+C is handled by trap.
     local key=""
-    IFS= read -r -s -n 1 -t 1.0 key || true
+    IFS= read -r -s -n 1 -t 0.4 key < /dev/tty || true
     if [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
       trap - INT TERM HUP
       ui_view_mode_off
