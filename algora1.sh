@@ -1371,6 +1371,7 @@ printf "Run: \033[38;5;39malgora1\033[0m\n\n"
 printf "\033[1mMain Menu\033[0m\n"
 printf "  • Running session\n"
 printf "  • Live Status\n"
+printf "  • Live Charts\n"
 printf "  • Exit\n\n"
 
 printf "\033[1mOne-session mode:\033[0m only one screen session allowed at a time.\n\n"
@@ -1444,7 +1445,8 @@ choose() {
       --header "$title" \
       --header.foreground 39 \
       --item.foreground 39 \
-      --selected.foreground 39 \
+      --selected.foreground 231 \
+      --selected.background 39 \
       --cursor.foreground 33 \
       "$@"
   else
@@ -1531,6 +1533,268 @@ fi
 SESSION
 
 sudo chmod +x /usr/local/bin/algora1-session
+
+sudo tee /usr/local/bin/algora1-live-chart >/dev/null <<'CHART'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SYMBOL="${1:-TSLA}"
+case "$SYMBOL" in
+  TSLA|NVDA) ;;
+  *) SYMBOL="TSLA" ;;
+esac
+
+python3 - "$SYMBOL" <<'PY'
+import json
+import os
+import sys
+import urllib.parse
+import urllib.request
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
+UTC = ZoneInfo("UTC")
+
+TITLE_W = 80
+PLOT_W, PLOT_H = 70, 18
+LEFT_PAD = 9
+BOTTOM_PAD = 2
+TOP_PAD = 2
+TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
+DOT = "·"
+HIDOT = "+"
+
+symbol = sys.argv[1].upper()
+
+def previous_trading_day(d: date) -> date:
+    d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+def iso_z(dt: datetime) -> str:
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def market_anchor_day(now_et: datetime) -> date:
+    open_today = datetime.combine(now_et.date(), time(9, 30), tzinfo=ET)
+    if now_et >= open_today:
+        return now_et.date()
+    return previous_trading_day(now_et.date())
+
+def fetch_intraday_bars(sym: str):
+    key = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
+    secret = os.getenv("ALPACA_LIVE_SECRET_KEY", "").strip()
+    if not key or not secret:
+        return None, "Missing ALPACA_LIVE_API_KEY / ALPACA_LIVE_SECRET_KEY"
+
+    now_et = datetime.now(ET)
+    day = market_anchor_day(now_et)
+    start = datetime.combine(day, time(9, 30), tzinfo=ET)
+    regular_close = datetime.combine(day, time(16, 0), tzinfo=ET)
+    after_close = datetime.combine(day, time(20, 0), tzinfo=ET)
+
+    end = now_et if now_et.date() == day else after_close
+    if end < start:
+        end = regular_close
+
+    params = {
+        "symbols": sym,
+        "timeframe": "1Min",
+        "start": iso_z(start),
+        "end": iso_z(end),
+        "adjustment": "raw",
+        "feed": "iex",
+        "sort": "asc",
+        "limit": "10000",
+    }
+    url = "https://data.alpaca.markets/v2/stocks/bars?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        url,
+        headers={
+            "APCA-API-KEY-ID": key,
+            "APCA-API-SECRET-KEY": secret,
+            "accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return None, f"IEX request failed: {e}"
+
+    bars = payload.get("bars", {}).get(sym, [])
+    points = []
+    for b in bars:
+        t = b.get("t")
+        c = b.get("c")
+        if t is None or c is None:
+            continue
+        dt = datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(ET)
+        if dt >= start:
+            points.append((dt, float(c)))
+
+    if not points:
+        return None, f"No intraday IEX bars yet for {sym}."
+
+    range_end = max(points[-1][0], regular_close)
+    return {
+        "day": day,
+        "start": start,
+        "end": range_end,
+        "points": points,
+    }, None
+
+def y_to_row(v: float, ymin: float, ymax: float) -> int:
+    if ymax == ymin:
+        return 0
+    return int((ymax - v) / (ymax - ymin) * (PLOT_H - 1))
+
+def sample_points(points, start: datetime, end: datetime):
+    total = (end - start).total_seconds()
+    if total <= 0:
+        return [points[-1][1]] * PLOT_W
+
+    values = []
+    idx = 0
+    for col in range(PLOT_W):
+        ratio = col / (PLOT_W - 1) if PLOT_W > 1 else 0
+        target = start + timedelta(seconds=total * ratio)
+        while idx + 1 < len(points) and points[idx + 1][0] <= target:
+            idx += 1
+        values.append(points[idx][1])
+    return values
+
+def put_label(canvas, row: int, text: str):
+    s = f"{text:>7}"
+    for k, ch in enumerate(s):
+        canvas[row][k] = ch
+
+def col_for_clock(day: date, start: datetime, end: datetime, hh: int, mm: int) -> int:
+    t = datetime.combine(day, time(hh, mm), tzinfo=ET)
+    if end <= start:
+        return 0
+    if t <= start:
+        return 0
+    if t >= end:
+        return PLOT_W - 1
+    ratio = (t - start).total_seconds() / (end - start).total_seconds()
+    return int(ratio * (PLOT_W - 1))
+
+def render_chart(data):
+    start = data["start"]
+    end = data["end"]
+    points = data["points"]
+    day = data["day"]
+
+    y = sample_points(points, start, end)
+    ymin, ymax = min(y), max(y)
+    if ymax == ymin:
+        ymax += 0.5
+        ymin -= 0.5
+    else:
+        pad = max(0.01, (ymax - ymin) * 0.07)
+        ymax += pad
+        ymin -= pad
+
+    W = LEFT_PAD + 1 + PLOT_W
+    H = TOP_PAD + PLOT_H + 1 + BOTTOM_PAD
+    canvas = [[" "] * W for _ in range(H)]
+
+    axis_x = LEFT_PAD
+    plot_top = TOP_PAD
+    axis_y = TOP_PAD + PLOT_H
+
+    for r in range(plot_top, plot_top + PLOT_H):
+        canvas[r][axis_x] = "│"
+    for c in range(axis_x, W):
+        canvas[axis_y][c] = "─"
+    canvas[axis_y][axis_x] = "└"
+
+    seg_start = max(0, PLOT_W - 14)
+    seg_cols = set(range(seg_start, PLOT_W))
+    hi_positions = set()
+
+    for col, val in enumerate(y):
+        r = plot_top + y_to_row(val, ymin, ymax)
+        c = axis_x + 1 + col
+        is_hi = col in seg_cols
+        canvas[r][c] = HIDOT if is_hi else DOT
+        if is_hi:
+            hi_positions.add((r, c))
+
+    last_price = y[-1]
+    last_r = plot_top + y_to_row(last_price, ymin, ymax)
+    last_c = axis_x + 1 + (PLOT_W - 1)
+    canvas[last_r][last_c] = HIDOT
+    last_point = (last_r, last_c)
+    put_label(canvas, last_r, f"${last_price:.2f}")
+    last_label_row = last_r
+
+    put_label(canvas, plot_top + 0, f"${ymax:.2f}")
+    put_label(canvas, plot_top + (PLOT_H // 2), f"${((ymax + ymin) / 2):.2f}")
+    put_label(canvas, plot_top + (PLOT_H - 1), f"${ymin:.2f}")
+
+    ticks = [
+        (col_for_clock(day, start, end, 9, 30), TIME_LABELS[0]),
+        (col_for_clock(day, start, end, 12, 0), TIME_LABELS[1]),
+        (col_for_clock(day, start, end, 16, 0), TIME_LABELS[2]),
+    ]
+    label_row = axis_y + 1
+    used = set()
+    for col, lab in ticks:
+        if col in used:
+            continue
+        used.add(col)
+        tick_c = axis_x + 1 + col
+        if axis_x <= tick_c < W:
+            canvas[axis_y][tick_c] = "┬"
+            start_col = tick_c - len(lab) // 2
+            min_start = axis_x + 1
+            max_start = W - len(lab)
+            start_col = max(min_start, min(start_col, max_start))
+            for k, ch in enumerate(lab):
+                canvas[label_row][start_col + k] = ch
+
+    title = f"{symbol} Daily Performance (IEX)"
+    title_start = max(0, (W - len(title)) // 2)
+    for i, ch in enumerate(title):
+        canvas[0][title_start + i] = ch
+
+    accent = "\033[38;5;39m"
+    muted = "\033[38;5;245m"
+    reset = "\033[0m"
+
+    print("".join(["─" for _ in range(TITLE_W)]))
+    for r in range(H):
+        row_chars = []
+        for c, ch in enumerate(canvas[r]):
+            if (r, c) in hi_positions or (r, c) == last_point or (r == last_label_row and 0 <= c < 7):
+                row_chars.append(f"{accent}{ch}{reset}")
+            else:
+                row_chars.append(ch)
+        print("".join(row_chars))
+    print("")
+    print(f"{muted}Extended hours included when available from Alpaca IEX feed.{reset}")
+    print("".join(["─" for _ in range(TITLE_W)]))
+
+data, err = fetch_intraday_bars(symbol)
+if err:
+    print("".join(["─" for _ in range(TITLE_W)]))
+    print("")
+    print(f"LIVE CHARTS ({symbol})")
+    print("")
+    print(err)
+    print("")
+    print("".join(["─" for _ in range(TITLE_W)]))
+    sys.exit(0)
+
+render_chart(data)
+PY
+CHART
+
+sudo chmod +x /usr/local/bin/algora1-live-chart
 
 sudo tee /usr/local/bin/algora1 >/dev/null <<'MENU'
 #!/usr/bin/env bash
@@ -1674,7 +1938,8 @@ choose() {
       --header "$title" \
       --header.foreground 39 \
       --item.foreground 39 \
-      --selected.foreground 39 \
+      --selected.foreground 231 \
+      --selected.background 39 \
       --cursor.foreground 33 \
       "$@"
   else
@@ -1977,6 +2242,47 @@ live_status_menu() {
   done
 }
 
+live_charts_menu() {
+  local symbol
+  symbol="$(choose "Live Charts" "TSLA" "NVDA" "Back")"
+  case "$symbol" in
+    TSLA|NVDA) ;;
+    *) return 0 ;;
+  esac
+
+  local stop=0
+  trap 'stop=1' INT
+  ui_view_mode_on
+
+  # Safety: if SSH drops or the script is terminated, restore tty + cursor
+  trap 'trap - INT TERM HUP; ui_view_mode_off; exit 0' TERM HUP
+
+  while true; do
+    if [ "$stop" -eq 1 ]; then
+      trap - INT TERM HUP
+      ui_view_mode_off
+      hard_clear
+      return 0
+    fi
+
+    hard_clear
+    cursor_hide
+    /usr/local/bin/algora1-live-chart "$symbol" 2>/dev/null || echo "(unable to load chart)"
+    printf "\n\033[38;5;245mPress Enter or Ctrl+C to return\033[0m\n"
+    cursor_hide
+
+    # Ignore all keys except Enter; Ctrl+C is handled by trap.
+    local key=""
+    IFS= read -r -s -n 1 -t 1.0 key || true
+    if [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
+      trap - INT TERM HUP
+      ui_view_mode_off
+      hard_clear
+      return 0
+    fi
+  done
+}
+
 troubleshoot_menu() {
   local eng
   eng="$(detect_running_engine_best_effort || true)"
@@ -2035,12 +2341,14 @@ main_loop() {
     selection="$(choose "Select an option" \
       "Running session" \
       "Live Status" \
+      "Live Charts" \
       "System Activity" \
       "Exit")"
 
     case "$selection" in
       "Running session") running_sessions_menu ;;
       "Live Status") live_status_menu ;;
+      "Live Charts") live_charts_menu ;;
       "System Activity") troubleshoot_menu ;;
       "Exit") exit 0 ;;
       *) exit 0 ;;
