@@ -1574,7 +1574,7 @@ BOTTOM_PAD = 2
 TOP_PAD = 3
 TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
 DOT = "·"
-HIDOT = "·"
+HIDOT = DOT
 WIDTH = 80
 HEIGHT = TOP_PAD + PLOT_H + 1 + BOTTOM_PAD  # 24 rows (chart shifted down one)
 
@@ -1655,8 +1655,43 @@ def fetch_intraday_bars(sym: str):
     if not points:
         return None, f"No intraday IEX bars yet for {sym}."
 
+    latest_time = points[-1][0]
+
     # Pull a fresher print so latest marker can move between 1-min bars.
     latest_price = None
+    quote_url = "https://data.alpaca.markets/v2/stocks/quotes/latest?" + urllib.parse.urlencode({
+        "symbols": sym,
+        "feed": "iex",
+    })
+    quote_req = urllib.request.Request(
+        quote_url,
+        headers={
+            "APCA-API-KEY-ID": key,
+            "APCA-API-SECRET-KEY": secret,
+            "accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(quote_req, timeout=5) as resp:
+            q_payload = json.loads(resp.read().decode("utf-8"))
+            quote = q_payload.get("quotes", {}).get(sym, {})
+            ap = quote.get("ap")
+            bp = quote.get("bp")
+            qt = quote.get("t")
+            if ap is not None and bp is not None and ap > 0 and bp > 0:
+                latest_price = (float(ap) + float(bp)) / 2.0
+            elif ap is not None and ap > 0:
+                latest_price = float(ap)
+            elif bp is not None and bp > 0:
+                latest_price = float(bp)
+            if qt:
+                qdt = datetime.fromisoformat(qt.replace("Z", "+00:00")).astimezone(ET)
+                if qdt > latest_time:
+                    latest_time = qdt
+    except Exception:
+        latest_price = None
+
+    # Fallback to latest trade if quote isn't available.
     trade_url = "https://data.alpaca.markets/v2/stocks/trades/latest?" + urllib.parse.urlencode({
         "symbols": sym,
         "feed": "iex",
@@ -1669,15 +1704,21 @@ def fetch_intraday_bars(sym: str):
             "accept": "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(trade_req, timeout=5) as resp:
-            t_payload = json.loads(resp.read().decode("utf-8"))
-            trade = t_payload.get("trades", {}).get(sym, {})
-            p = trade.get("p")
-            if p is not None:
-                latest_price = float(p)
-    except Exception:
-        latest_price = None
+    if latest_price is None:
+        try:
+            with urllib.request.urlopen(trade_req, timeout=5) as resp:
+                t_payload = json.loads(resp.read().decode("utf-8"))
+                trade = t_payload.get("trades", {}).get(sym, {})
+                p = trade.get("p")
+                tt = trade.get("t")
+                if p is not None:
+                    latest_price = float(p)
+                if tt:
+                    tdt = datetime.fromisoformat(tt.replace("Z", "+00:00")).astimezone(ET)
+                    if tdt > latest_time:
+                        latest_time = tdt
+        except Exception:
+            latest_price = None
 
     return {
         "day": day,
@@ -1685,6 +1726,7 @@ def fetch_intraday_bars(sym: str):
         "plot_end": regular_close,  # fixed session axis
         "points": points,
         "latest_price": latest_price,
+        "latest_time": latest_time,
     }, None
 
 def y_to_row(v: float, ymin: float, ymax: float) -> int:
@@ -1699,9 +1741,13 @@ def sample_points(points, start: datetime, plot_end: datetime):
 
     values = []
     idx = 0
+    last_t = points[-1][0]
     for col in range(PLOT_W):
         ratio = col / (PLOT_W - 1) if PLOT_W > 1 else 0
         target = start + timedelta(seconds=total * ratio)
+        if target > last_t:
+            values.append(None)
+            continue
         while idx + 1 < len(points) and points[idx + 1][0] <= target:
             idx += 1
         values.append(points[idx][1])
@@ -1729,6 +1775,7 @@ def render_chart(data):
     plot_end = data["plot_end"]
     points = data["points"]
     latest_price = data.get("latest_price")
+    latest_time = data.get("latest_time")
 
     session_points = [p for p in points if p[0] <= plot_end]
     if not session_points:
@@ -1736,7 +1783,10 @@ def render_chart(data):
 
     y = sample_points(session_points, start, plot_end)
     last_price = float(latest_price) if latest_price is not None else points[-1][1]
-    ymin, ymax = min(min(y), last_price), max(max(y), last_price)
+    y_present = [v for v in y if v is not None]
+    if not y_present:
+        y_present = [last_price]
+    ymin, ymax = min(min(y_present), last_price), max(max(y_present), last_price)
     if ymax == ymin:
         ymax += 0.5
         ymin -= 0.5
@@ -1759,11 +1809,25 @@ def render_chart(data):
         canvas[axis_y][c] = "─"
     canvas[axis_y][axis_x] = "└"
 
-    # Keep a uniform dot style; no special "active segment" marker.
-    seg_cols = set()
+    # Color the most recent segment with same-size dots (no plus markers).
+    if latest_time is None:
+        latest_time = points[-1][0]
+    if latest_time < start:
+        latest_time = start
+    if latest_time > plot_end:
+        latest_time = plot_end
+    total_secs = (plot_end - start).total_seconds()
+    marker_col = int(((latest_time - start).total_seconds() / total_secs) * (PLOT_W - 1)) if total_secs > 0 else 0
+    marker_col = max(0, min(PLOT_W - 1, marker_col))
+
+    seg_len = 12
+    seg_start = max(0, marker_col - seg_len + 1)
+    seg_cols = set(range(seg_start, marker_col + 1))
     hi_positions = set()
 
     for col, val in enumerate(y):
+        if val is None:
+            continue
         r = plot_top + y_to_row(val, ymin, ymax)
         c = axis_x + 1 + col
         is_hi = col in seg_cols
@@ -1772,7 +1836,7 @@ def render_chart(data):
             hi_positions.add((r, c))
 
     last_r = plot_top + y_to_row(last_price, ymin, ymax)
-    last_c = axis_x + 1 + (PLOT_W - 1)
+    last_c = axis_x + 1 + marker_col
     canvas[last_r][last_c] = DOT
     last_point = (last_r, last_c)
     put_label(canvas, last_r, f"${last_price:.2f}")
@@ -1801,14 +1865,27 @@ def render_chart(data):
 
     title = f"{symbol} Daily Performance"
     title_start = max(0, (W - len(title)) // 2)
+    title_row = 2
     for i, ch in enumerate(title):
-        canvas[0][title_start + i] = ch
+        canvas[title_row][title_start + i] = ch
+
+    hint = "Press Ctrl+C to return"
+    hint_row = TOP_PAD + (PLOT_H // 2)
+    hint_start = max(axis_x + 2, (W - len(hint)) // 2)
+    hint_positions = set()
+    for i, ch in enumerate(hint):
+        c = hint_start + i
+        if c < W:
+            canvas[hint_row][c] = ch
+            hint_positions.add((hint_row, c))
 
     lines = []
     for r in range(H):
         row_chars = []
         for c, ch in enumerate(canvas[r]):
-            if (r, c) in hi_positions or (r, c) == last_point or (r == last_label_row and 0 <= c < 7):
+            if (r, c) in hint_positions:
+                row_chars.append(f"{MUTED}{ch}{RESET}")
+            elif (r, c) in hi_positions or (r, c) == last_point or (r == last_label_row and 0 <= c < 7):
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
             else:
                 row_chars.append(ch)
