@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1bc76956dfd14d669b306e9637e54460.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c2bf1a20aaa648ff92da357e4677cb8c.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_bcdaaaaf147d4387b2fc35eacc5d9334.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c1f45e0bfcb64e3d9d75ff3043bde41c.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3fd08b2f5c10438fac9b6d31ba8e3d32.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_586f4639b52d4deeb91523ea01771c43.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f3c6d80ccecc46c688e070d25ef47023.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_10fae80d7307462290eff1b078e35c42.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1445,6 +1445,14 @@ EOT
 choose() {
   local title="$1"; shift
   if has_gum; then
+    local h=18
+    if command -v tput >/dev/null 2>&1; then
+      local lines
+      lines="$(tput lines 2>/dev/null || true)"
+      if [ -n "${lines}" ] && [ "${lines}" -gt 10 ] 2>/dev/null; then
+        h=$((lines - 6))
+      fi
+    fi
     gum choose \
       --header "$title" \
       --header.foreground 39 \
@@ -1452,6 +1460,7 @@ choose() {
       --selected.foreground 231 \
       --selected.background 39 \
       --cursor.foreground 33 \
+      --height "${h}" \
       "$@"
   else
     echo "$title"
@@ -1562,6 +1571,7 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+import urllib.error
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1656,6 +1666,28 @@ def fetch_intraday_bars(sym: str):
         return None, f"No intraday IEX bars yet for {sym}."
 
     latest_time = points[-1][0]
+    active_investment = False
+
+    # Active investment = live position exists for this symbol.
+    pos_url = f"https://api.alpaca.markets/v2/positions/{sym}"
+    pos_req = urllib.request.Request(
+        pos_url,
+        headers={
+            "APCA-API-KEY-ID": key,
+            "APCA-API-SECRET-KEY": secret,
+            "accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(pos_req, timeout=5) as resp:
+            pos_payload = json.loads(resp.read().decode("utf-8"))
+            qty = float(pos_payload.get("qty", "0") or 0.0)
+            active_investment = abs(qty) > 1e-6
+    except urllib.error.HTTPError as e:
+        if getattr(e, "code", None) == 404:
+            active_investment = False
+    except Exception:
+        active_investment = False
 
     # Pull a fresher print so latest marker can move between 1-min bars.
     latest_price = None
@@ -1727,6 +1759,7 @@ def fetch_intraday_bars(sym: str):
         "points": points,
         "latest_price": latest_price,
         "latest_time": latest_time,
+        "active_investment": active_investment,
     }, None
 
 def y_to_row(v: float, ymin: float, ymax: float) -> int:
@@ -1776,6 +1809,7 @@ def render_chart(data):
     points = data["points"]
     latest_price = data.get("latest_price")
     latest_time = data.get("latest_time")
+    active_investment = bool(data.get("active_investment"))
 
     session_points = [p for p in points if p[0] <= plot_end]
     if not session_points:
@@ -1820,9 +1854,11 @@ def render_chart(data):
     marker_col = int(((latest_time - start).total_seconds() / total_secs) * (PLOT_W - 1)) if total_secs > 0 else 0
     marker_col = max(0, min(PLOT_W - 1, marker_col))
 
-    seg_len = 12
-    seg_start = max(0, marker_col - seg_len + 1)
-    seg_cols = set(range(seg_start, marker_col + 1))
+    seg_cols = set()
+    if active_investment:
+        seg_len = 12
+        seg_start = max(0, marker_col - seg_len + 1)
+        seg_cols = set(range(seg_start, marker_col + 1))
     hi_positions = set()
 
     for col, val in enumerate(y):
@@ -1865,7 +1901,7 @@ def render_chart(data):
 
     title = f"{symbol} Daily Performance"
     title_start = max(0, (W - len(title)) // 2)
-    title_row = 2
+    title_row = 1
     for i, ch in enumerate(title):
         canvas[title_row][title_start + i] = ch
 
@@ -1885,7 +1921,7 @@ def render_chart(data):
         for c, ch in enumerate(canvas[r]):
             if (r, c) in hint_positions:
                 row_chars.append(f"{MUTED}{ch}{RESET}")
-            elif (r, c) in hi_positions or (r, c) == last_point or (r == last_label_row and 0 <= c < 7):
+            elif active_investment and ((r, c) in hi_positions or (r, c) == last_point or (r == last_label_row and 0 <= c < 7)):
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
             else:
                 row_chars.append(ch)
@@ -2051,6 +2087,14 @@ secs_until_midnight_et() {
 choose() {
   local title="$1"; shift
   if has_gum; then
+    local h=18
+    if command -v tput >/dev/null 2>&1; then
+      local lines
+      lines="$(tput lines 2>/dev/null || true)"
+      if [ -n "${lines}" ] && [ "${lines}" -gt 10 ] 2>/dev/null; then
+        h=$((lines - 6))
+      fi
+    fi
     gum choose \
       --header "$title" \
       --header.foreground 39 \
@@ -2058,6 +2102,7 @@ choose() {
       --selected.foreground 231 \
       --selected.background 39 \
       --cursor.foreground 33 \
+      --height "${h}" \
       "$@"
   else
     echo "$title"
@@ -2402,7 +2447,7 @@ live_charts_menu() {
 
     printf '\033[H' 2>/dev/null || true
     cursor_hide
-    /usr/local/bin/algora1-live-chart "$symbol" 2>/dev/null || echo "(unable to load chart)"
+    /usr/local/bin/algora1-live-chart "$symbol" 2>/dev/null || true
     cursor_hide
 
     # Ignore all keys except Enter; Ctrl+C is handled by trap.
