@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1bc76956dfd14d669b306e9637e54460.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c2bf1a20aaa648ff92da357e4677cb8c.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_bcdaaaaf147d4387b2fc35eacc5d9334.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c1f45e0bfcb64e3d9d75ff3043bde41c.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_11bb7ed50eb1458fa81dd523b3472341.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5ae80c0a2c914a4ab242b5f0469845cc.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_bf61dd5a6dfe4d50b9571354eac8f40e.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b7b5ce7642c544d6829aa397f3c74f30.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1866,9 +1866,7 @@ def render_chart(data):
 
     seg_cols = set()
     if active_investment:
-        seg_len = 12
-        seg_start = max(0, marker_col - seg_len + 1)
-        seg_cols = set(range(seg_start, marker_col + 1))
+        seg_cols = {marker_col}
     hi_positions = set()
 
     for col, val in enumerate(y):
@@ -2441,11 +2439,29 @@ live_charts_menu() {
   fi
 
   local pick symbol
-  pick="$(choose "Live Charts" "Tesla, Inc. (TSLA)" "NVIDIA Corporation (NVDA)" "Back")"
-  case "$pick" in
-    "Tesla, Inc. (TSLA)") symbol="TSLA" ;;
-    "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
-    *) return 0 ;;
+  case "$eng" in
+    NVDA)
+      pick="$(choose "Live Charts" "NVIDIA Corporation (NVDA)" "Back")"
+      case "$pick" in
+        "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
+        *) return 0 ;;
+      esac
+      ;;
+    TSLA)
+      pick="$(choose "Live Charts" "Tesla, Inc. (TSLA)" "Back")"
+      case "$pick" in
+        "Tesla, Inc. (TSLA)") symbol="TSLA" ;;
+        *) return 0 ;;
+      esac
+      ;;
+    BEXP|PMNY|*)
+      pick="$(choose "Live Charts" "Tesla, Inc. (TSLA)" "NVIDIA Corporation (NVDA)" "Back")"
+      case "$pick" in
+        "Tesla, Inc. (TSLA)") symbol="TSLA" ;;
+        "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
+        *) return 0 ;;
+      esac
+      ;;
   esac
 
   local stop=0
