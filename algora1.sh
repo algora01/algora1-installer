@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_11bb7ed50eb1458fa81dd523b3472341.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5ae80c0a2c914a4ab242b5f0469845cc.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_bf61dd5a6dfe4d50b9571354eac8f40e.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b7b5ce7642c544d6829aa397f3c74f30.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_38139453eb8147d2aada99e4ba4a3df6.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a1e6c53cfc64a9eae0a48416fb4802e.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d155ac78d124d3ab470ad349efb3ce1.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d3a5845dce34f1caf3f17040fa13eec.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1853,7 +1853,7 @@ def render_chart(data):
         canvas[axis_y][c] = "─"
     canvas[axis_y][axis_x] = "└"
 
-    # Color the most recent segment with same-size dots (no plus markers).
+    # Keep the moving marker tied to real/latest time.
     if latest_time is None:
         latest_time = points[-1][0]
     if latest_time < start:
@@ -1864,20 +1864,15 @@ def render_chart(data):
     marker_col = int(((latest_time - start).total_seconds() / total_secs) * (PLOT_W - 1)) if total_secs > 0 else 0
     marker_col = max(0, min(PLOT_W - 1, marker_col))
 
-    seg_cols = set()
-    if active_investment:
-        seg_cols = {marker_col}
-    hi_positions = set()
+    completed_positions = set()
 
     for col, val in enumerate(y):
         if val is None:
             continue
         r = plot_top + y_to_row(val, ymin, ymax)
         c = axis_x + 1 + col
-        is_hi = col in seg_cols
-        canvas[r][c] = HIDOT if is_hi else DOT
-        if is_hi:
-            hi_positions.add((r, c))
+        canvas[r][c] = DOT
+        completed_positions.add((r, c))
 
     last_r = plot_top + y_to_row(last_price, ymin, ymax)
     last_c = axis_x + 1 + marker_col
@@ -1929,7 +1924,11 @@ def render_chart(data):
         for c, ch in enumerate(canvas[r]):
             if (r, c) in hint_positions:
                 row_chars.append(f"{MUTED}{ch}{RESET}")
-            elif active_investment and ((r, c) in hi_positions or (r, c) == last_point or (r == last_label_row and 0 <= c < 7)):
+            elif (r == last_label_row and 0 <= c < 7):
+                row_chars.append(f"{ACCENT}{ch}{RESET}")
+            elif (r, c) == last_point:
+                row_chars.append(f"{ACCENT}{ch}{RESET}")
+            elif active_investment and (r, c) in completed_positions:
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
             else:
                 row_chars.append(ch)
