@@ -1571,12 +1571,12 @@ UTC = ZoneInfo("UTC")
 PLOT_W, PLOT_H = 70, 18
 LEFT_PAD = 9
 BOTTOM_PAD = 2
-TOP_PAD = 2
+TOP_PAD = 3
 TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
 DOT = "·"
-HIDOT = "+"
+HIDOT = "·"
 WIDTH = 80
-HEIGHT = TOP_PAD + PLOT_H + 1 + BOTTOM_PAD  # 23 rows exactly, like line.py
+HEIGHT = TOP_PAD + PLOT_H + 1 + BOTTOM_PAD  # 24 rows (chart shifted down one)
 
 ACCENT = "\033[38;5;39m"
 MUTED = "\033[38;5;245m"
@@ -1759,8 +1759,8 @@ def render_chart(data):
         canvas[axis_y][c] = "─"
     canvas[axis_y][axis_x] = "└"
 
-    seg_start = max(0, PLOT_W - 14)
-    seg_cols = set(range(seg_start, PLOT_W))
+    # Keep a uniform dot style; no special "active segment" marker.
+    seg_cols = set()
     hi_positions = set()
 
     for col, val in enumerate(y):
@@ -1773,7 +1773,7 @@ def render_chart(data):
 
     last_r = plot_top + y_to_row(last_price, ymin, ymax)
     last_c = axis_x + 1 + (PLOT_W - 1)
-    canvas[last_r][last_c] = HIDOT
+    canvas[last_r][last_c] = DOT
     last_point = (last_r, last_c)
     put_label(canvas, last_r, f"${last_price:.2f}")
     last_label_row = last_r
