@@ -1456,10 +1456,10 @@ choose() {
 
     # Pin navigation hint to terminal bottom; hide gum's built-in help line.
     if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
-      tput sc 2>/dev/null || true
-      tput cup $((lines - 1)) 0 2>/dev/null || true
-      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m'
-      tput rc 2>/dev/null || true
+      tput sc 1>&2 2>/dev/null || true
+      tput cup $((lines - 1)) 0 1>&2 2>/dev/null || true
+      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m' >&2
+      tput rc 1>&2 2>/dev/null || true
     fi
 
     gum choose \
@@ -1473,10 +1473,10 @@ choose() {
       --no-show-help \
       "$@"
   else
-    echo "$title"
+    echo "$title" >&2
     local i=1
-    for opt in "$@"; do echo "  $i) $opt"; i=$((i+1)); done
-    printf "Select [1-%d]: " "$#"
+    for opt in "$@"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    printf "Select [1-%d]: " "$#" >&2
     local n; read -r n; n="${n:-1}"
     echo "${@:n:1}"
   fi
@@ -2108,10 +2108,10 @@ choose() {
 
     # Pin navigation hint to terminal bottom; hide gum's built-in help line.
     if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
-      tput sc 2>/dev/null || true
-      tput cup $((lines - 1)) 0 2>/dev/null || true
-      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m'
-      tput rc 2>/dev/null || true
+      tput sc 1>&2 2>/dev/null || true
+      tput cup $((lines - 1)) 0 1>&2 2>/dev/null || true
+      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m' >&2
+      tput rc 1>&2 2>/dev/null || true
     fi
 
     gum choose \
@@ -2125,10 +2125,10 @@ choose() {
       --no-show-help \
       "$@"
   else
-    echo "$title"
+    echo "$title" >&2
     local i=1
-    for opt in "$@"; do echo "  $i) $opt"; i=$((i+1)); done
-    printf "Select [1-%d]: " "$#"
+    for opt in "$@"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    printf "Select [1-%d]: " "$#" >&2
     local n; read -r n; n="${n:-1}"
     echo "${@:n:1}"
   fi
