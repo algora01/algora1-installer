@@ -2329,14 +2329,14 @@ live_charts_menu() {
     cursor_hide
 
     # Ignore all keys except Enter; Ctrl+C is handled by trap.
-    local key="" rc=0
-    IFS= read -r -s -n 1 -t 0.6 key < /dev/tty
-    rc=$?
-    if [ "$rc" -eq 0 ] && { [ -z "$key" ] || [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; }; then
-      trap - INT TERM HUP
-      ui_view_mode_off
-      hard_clear
-      return 0
+    local key=""
+    if IFS= read -r -s -n 1 -t 0.6 key < /dev/tty; then
+      if [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
+        trap - INT TERM HUP
+        ui_view_mode_off
+        hard_clear
+        return 0
+      fi
     fi
   done
 }
