@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3fd08b2f5c10438fac9b6d31ba8e3d32.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_586f4639b52d4deeb91523ea01771c43.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f3c6d80ccecc46c688e070d25ef47023.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_10fae80d7307462290eff1b078e35c42.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1bc76956dfd14d669b306e9637e54460.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c2bf1a20aaa648ff92da357e4677cb8c.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_bcdaaaaf147d4387b2fc35eacc5d9334.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c1f45e0bfcb64e3d9d75ff3043bde41c.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1446,13 +1446,22 @@ choose() {
   local title="$1"; shift
   if has_gum; then
     local h=18
+    local lines=""
     if command -v tput >/dev/null 2>&1; then
-      local lines
       lines="$(tput lines 2>/dev/null || true)"
       if [ -n "${lines}" ] && [ "${lines}" -gt 10 ] 2>/dev/null; then
         h=$((lines - 6))
       fi
     fi
+
+    # Pin navigation hint to terminal bottom; hide gum's built-in help line.
+    if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
+      tput sc 2>/dev/null || true
+      tput cup $((lines - 1)) 0 2>/dev/null || true
+      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m'
+      tput rc 2>/dev/null || true
+    fi
+
     gum choose \
       --header "$title" \
       --header.foreground 39 \
@@ -1461,6 +1470,7 @@ choose() {
       --selected.background 39 \
       --cursor.foreground 33 \
       --height "${h}" \
+      --no-show-help \
       "$@"
   else
     echo "$title"
@@ -2088,13 +2098,22 @@ choose() {
   local title="$1"; shift
   if has_gum; then
     local h=18
+    local lines=""
     if command -v tput >/dev/null 2>&1; then
-      local lines
       lines="$(tput lines 2>/dev/null || true)"
       if [ -n "${lines}" ] && [ "${lines}" -gt 10 ] 2>/dev/null; then
         h=$((lines - 6))
       fi
     fi
+
+    # Pin navigation hint to terminal bottom; hide gum's built-in help line.
+    if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
+      tput sc 2>/dev/null || true
+      tput cup $((lines - 1)) 0 2>/dev/null || true
+      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m'
+      tput rc 2>/dev/null || true
+    fi
+
     gum choose \
       --header "$title" \
       --header.foreground 39 \
@@ -2103,6 +2122,7 @@ choose() {
       --selected.background 39 \
       --cursor.foreground 33 \
       --height "${h}" \
+      --no-show-help \
       "$@"
   else
     echo "$title"
