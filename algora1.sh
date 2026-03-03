@@ -37,7 +37,6 @@ warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
 die()  { printf "\n\033[1;31m[error]\033[0m %s\n" "$*" >&2; exit 1; }
 
 print_engine_blurbs() {
-  # Print to stderr so it doesn't interfere with gum choose capturing stdout
   cat >&2 <<'EOT'
 BEXP — Diversified Tesla and NVIDIA engine with real-time risk controls.
 
@@ -70,16 +69,11 @@ detect_os() {
 }
 
 set_term_title() {
-  # Works in macOS Terminal, iTerm2, and most Linux terminals
-  # OSC 0 → set window+tab title
+
   printf '\033]0;%s\007' "$1"
 }
 
-# ---------- pretty download progress bar (no ######) ----------
-
 stat_size_bytes() {
-  # cross-platform file size
-  # macOS: stat -f%z ; Linux: stat -c%s
   if [ -f "$1" ]; then
     if stat -f%z "$1" >/dev/null 2>&1; then
       stat -f%z "$1"
@@ -92,7 +86,6 @@ stat_size_bytes() {
 }
 
 get_content_length() {
-  # best-effort Content-Length (bytes); returns empty if unknown
   local url="$1"
   local cl=""
   cl="$(curl -fsSLI "$url" 2>/dev/null | awk -F': ' 'tolower($1)=="content-length"{gsub("\r","",$2); print $2}' | tail -n 1)"
@@ -103,9 +96,8 @@ get_content_length() {
 }
 
 render_bar() {
-  # render_bar percent width -> e.g. [█████░░░░░░]  42%
   local pct="$1"
-  local width="${2:-24}"   # keep small for 80x24 terminals
+  local width="${2:-24}"
 
   [ "$pct" -lt 0 ] && pct=0
   [ "$pct" -gt 100 ] && pct=100
@@ -157,21 +149,18 @@ download_file_with_progress() {
     sleep 0.1 || true
   done
 
-  # wait + validate FIRST
   wait "$pid"
   local rc=$?
 
   [ "$rc" -eq 0 ] || ui_die "Failed to download from ${url}"
   [ -s "$out" ] || ui_die "Download completed but file is empty: $out"
 
-  # NOW finalize in a way that can't be overwritten by the next print
   if [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null; then
     printf "\r\033[K%s %s" "$label" "$(render_bar 100 "$width")" >&2
   else
     printf "\r\033[K%s [done]" "$label" >&2
   fi
 
-  # critical: commit the line (move cursor to next line)
   printf "\n" >&2
 }
 
@@ -189,10 +178,9 @@ ui_header() {
 }
 
 session_pretty_name() {
-  # input: "2758.investing" -> output: "investing"
   local raw="${1:-}"
-  raw="${raw##*/}"   # safety: strip any path
-  echo "${raw#*.}"   # strip up to first dot
+  raw="${raw##*/}"
+  echo "${raw#*.}"
 }
 
 ui_step() {
@@ -362,7 +350,7 @@ install_linux_desktop_shortcut() {
   local icon_url="$1"
   local apps_dir="${HOME}/.local/share/applications"
   local icon_dir="${HOME}/.local/share/icons"
-  local bin_path="${HOME}/.local/bin/algora1"   # keep lowercase command
+  local bin_path="${HOME}/.local/bin/algora1"   
 
   mkdir -p "$apps_dir" "$icon_dir"
 
@@ -371,7 +359,6 @@ install_linux_desktop_shortcut() {
     curl -fsSL "$icon_url" -o "$icon_path" || true
   fi
 
-  # File name (what you see in the filesystem)
   cat > "$apps_dir/ALGORA1.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -577,7 +564,6 @@ ensure_macos_app_bundle_present() {
 
   return 0
 }
-
 
 install_macos_app_bundle() {
 
@@ -1179,9 +1165,6 @@ ensure_compute_api_enabled_interactive() {
   ui_ok "compute.googleapis.com enabled"
 }
 
-# =========================
-# DEFAULTS + SSH KEY
-# =========================
 ensure_defaults() {
   REGION="${REGION:-$REGION_DEFAULT}"
   ZONE="${ZONE:-$ZONE_DEFAULT}"
