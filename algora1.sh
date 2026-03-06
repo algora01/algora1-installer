@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_d1a328e159d34060a5786f78351c31a7.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c73c5c1f7f654b9f861c4eb3639debc6.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c624262f80314e688a530672b6a40092.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_7faa82382e944beda9867680640cf237.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_38139453eb8147d2aada99e4ba4a3df6.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a1e6c53cfc64a9eae0a48416fb4802e.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d155ac78d124d3ab470ad349efb3ce1.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d3a5845dce34f1caf3f17040fa13eec.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1211,14 +1211,27 @@ create_instance_if_needed() {
   local ssh_metadata
   ssh_metadata="${REMOTE_USER}:$(cat "$key_pub")"
 
-  ui_spin "Creating VM '${INSTANCE_NAME}'…" gcloud compute instances create "${INSTANCE_NAME}" \
+  ui_info "Creating VM '${INSTANCE_NAME}' in ${ZONE}…"
+  local create_err
+  create_err="$(mktemp)"
+  if ! gcloud compute instances create "${INSTANCE_NAME}" \
     --zone "${ZONE}" \
     --machine-type "${MACHINE_TYPE}" \
     --image-family "${IMAGE_FAMILY}" \
     --image-project "${IMAGE_PROJECT}" \
     --metadata "ssh-keys=${ssh_metadata}" \
     --tags "ssh" \
-    --quiet
+    --quiet \
+    >/dev/null 2>"${create_err}"; then
+    ui_warn "VM provisioning failed at [7/12]."
+    if [ -s "${create_err}" ]; then
+      ui_warn "gcloud error:"
+      sed -n '1,20p' "${create_err}" >&2 || true
+    fi
+    rm -f "${create_err}" >/dev/null 2>&1 || true
+    ui_die "Could not create VM. Check quota, zone capacity, machine type, and billing."
+  fi
+  rm -f "${create_err}" >/dev/null 2>&1 || true
 
   ui_ok "Instance created"
 }
@@ -1896,7 +1909,7 @@ def render_chart(data):
         h = candle["h"]
         l = candle["l"]
         close = candle["c"]
-        color = ACCENT if col == latest_candle_col else (GREEN if close >= o else RED)
+        color = GREEN if close >= o else RED
 
         wick_top = plot_top + y_to_row(h, ymin, ymax)
         wick_bottom = plot_top + y_to_row(l, ymin, ymax)
@@ -1906,25 +1919,10 @@ def render_chart(data):
             canvas[r][c] = WICK
             candle_colors[(r, c)] = color
 
-        body_top = plot_top + y_to_row(max(o, close), ymin, ymax)
-        body_bottom = plot_top + y_to_row(min(o, close), ymin, ymax)
-        lo = min(body_top, body_bottom)
-        hi = max(body_top, body_bottom)
-        if lo == hi:
-            canvas[lo][c] = DOJI
-            candle_colors[(lo, c)] = color
-        else:
-            # Compact candle body for cleaner 80x24 readability.
-            canvas[lo][c] = BODY
-            candle_colors[(lo, c)] = color
-            canvas[hi][c] = BODY
-            candle_colors[(hi, c)] = color
-            if hi - lo >= 3:
-                mid = (lo + hi) // 2
-                canvas[mid][c] = BODY
-                candle_colors[(mid, c)] = color
-
         close_row = plot_top + y_to_row(close, ymin, ymax)
+        body_ch = DOJI if abs(close - o) < 1e-8 else BODY
+        canvas[close_row][c] = body_ch
+        candle_colors[(close_row, c)] = ACCENT if col == latest_candle_col else color
         close_markers.add((close_row, c))
 
     last_r = plot_top + y_to_row(last_price, ymin, ymax)
@@ -2168,18 +2166,31 @@ live_status_box() {
   local engine="$1"
   local body="$2"
 
-  local rows=24 cols=80
-  local box_w=76 box_h=22
+  local rows cols
+  rows="$(tput lines 2>/dev/null || echo 24)"
+  cols="$(tput cols 2>/dev/null || echo 80)"
+  [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+
+  local box_w=76
+  [ "$box_w" -gt $((cols - 2)) ] && box_w=$((cols - 2))
+  [ "$box_w" -lt 44 ] && box_w=44
+
+  local box_h=22
+  [ "$box_h" -gt $((rows - 2)) ] && box_h=$((rows - 2))
+  [ "$box_h" -lt 12 ] && box_h=12
+
   local inner_w=$((box_w - 2))
   local left=$(( (cols - box_w) / 2 ))
-  local top=1
+  local top=$(( (rows - box_h) / 2 ))
+  [ "$top" -lt 1 ] && top=1
 
   local hline
   printf -v hline '%*s' $((box_w - 2)) ''
   hline="${hline// /─}"
 
   local -a body_lines=()
-  local prev_blank=0
+  local blank_run=0
   while IFS= read -r ln; do
     local plain
     plain="$(strip_ansi "$ln")"
@@ -2189,13 +2200,13 @@ live_status_box() {
       continue
     fi
     if [[ "$plain" =~ ^[[:space:]]*$ ]]; then
-      if [ "$prev_blank" -eq 0 ]; then
+      if [ "$blank_run" -lt 2 ]; then
         body_lines+=("")
-        prev_blank=1
       fi
+      blank_run=$((blank_run + 1))
       continue
     fi
-    prev_blank=0
+    blank_run=0
     body_lines+=("$ln")
   done < <(printf "%s\n" "$body" | sed 's/\r//g')
 
@@ -2203,24 +2214,46 @@ live_status_box() {
     body_lines+=("(no status yet)")
   fi
 
-  local max_content=$((box_h - 2))  # 20 lines
+  local max_content=$((box_h - 2))
   local -a content=()
-  for ((i=0; i<max_content; i++)); do content+=(""); done
-
-  local idx=0
+  local idx=0 saw_footer=0
   local ln plain
   for ln in "${body_lines[@]}"; do
     plain="$(strip_ansi "$ln")"
-    # Footer comes from engine file; control panel uses Enter-only return text.
-    if [[ "$plain" == *"Ctrl+C to go back"* ]]; then
-      continue
+    if [[ "$plain" == *"Ctrl+C to go back"* ]] || [[ "$plain" == "Press Enter to return."* ]]; then
+      ln="Press Enter to return."
+      plain="Press Enter to return."
+      saw_footer=1
     fi
-    [ "$idx" -ge 18 ] && break
-    content[$idx]="$ln"
+    [ "$idx" -ge "$max_content" ] && break
+    content+=("$ln")
     idx=$((idx + 1))
   done
-  content[18]="Press Enter to return."
-  content[19]=""
+
+  if [ "$saw_footer" -eq 0 ] && [ "$idx" -lt "$max_content" ]; then
+    if [ "$idx" -gt 0 ]; then
+      plain="$(strip_ansi "${content[$((idx - 1))]}")"
+      if [[ ! "$plain" =~ ^[[:space:]]*$ ]] && [ "$idx" -lt "$max_content" ]; then
+        content+=("")
+        idx=$((idx + 1))
+      fi
+    fi
+    if [ "$idx" -lt "$max_content" ]; then
+      content+=("Press Enter to return.")
+      idx=$((idx + 1))
+    fi
+  fi
+
+  for ((i=idx; i<max_content; i++)); do content+=(""); done
+
+  local header_idx=-1
+  for ((i=0; i<max_content; i++)); do
+    plain="$(strip_ansi "${content[$i]}")"
+    if [[ ! "$plain" =~ ^[[:space:]]*$ ]]; then
+      header_idx="$i"
+      break
+    fi
+  done
 
   printf '\033[H' 2>/dev/null || true
   for ((i=0; i<top; i++)); do
@@ -2230,20 +2263,18 @@ live_status_box() {
   printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" "" "$hline"
   for ((i=0; i<max_content; i++)); do
     local txt="" inside plain
-    [ "$i" -lt "${#content[@]}" ] && txt="${content[$i]}"
+    txt="${content[$i]}"
     plain="$(strip_ansi "$txt")"
-    if [[ "$plain" == *"Market Open"* ]] || [[ "$plain" == *"Market Closed"* ]] || [[ "$plain" == *"NO ACTIVE POSITIONS"* ]] || [[ "$plain" == "Press Enter to return."* ]]; then
-      inside="$(center_ansi "$txt" "$inner_w")"
-    else
+    if [ "$i" -eq "$header_idx" ]; then
       inside="$(left_ansi "$txt" "$inner_w")"
+    elif [[ "$plain" =~ ^[[:space:]]*$ ]]; then
+      printf -v inside '%*s' "$inner_w" ""
+    else
+      inside="$(center_ansi "$txt" "$inner_w")"
     fi
     printf '%*s\033[38;5;39m│\033[0m%s\033[38;5;39m│\033[0m\n' "$left" "" "$inside"
   done
   printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" "" "$hline"
-
-  for ((i=0; i<rows-top-box_h; i++)); do
-    printf '%*s\n' "$cols" ""
-  done
 }
 
 secs_until_midnight_et() {
