@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_281aee7322da456f87e5f5b82ca7eaa7.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b9576511de084ee6b744a7fff0a17511.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_53c1ef354f2844c488670513f9f73302.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_55767d71357645a2bb179593b3f1ac18.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_25bc0db23d444c68b47561f1a939ea7f.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_457ab99a77da4cb7a284837b95bf9173.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_05cdd772fa6449e2aa9a3b63d5e839ab.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_d9c1002336a742199a6b0ba20758ef5f.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1857,17 +1857,18 @@ def render_chart(data):
         candle = candles[col]
         if candle is None:
             continue
+        # Keep historical wick geometry stable; only the latest close updates in real-time.
         candle["c"] = last_price
-        candle["h"] = max(candle["h"], last_price)
-        candle["l"] = min(candle["l"], last_price)
         break
 
-    y_values = [last_price]
+    y_values = []
     for c in candles:
         if c is None:
             continue
         y_values.append(c["l"])
         y_values.append(c["h"])
+    if not y_values:
+        y_values = [last_price]
 
     ymin, ymax = min(y_values), max(y_values)
     if ymax == ymin:
@@ -1908,8 +1909,8 @@ def render_chart(data):
         o = candle["o"]
         h = candle["h"]
         l = candle["l"]
-        close = candle["c"]
-        color = GREEN if close >= o else RED
+        close = max(l, min(h, candle["c"]))
+        base_color = ACCENT if active_investment else (GREEN if close >= o else RED)
 
         wick_top = plot_top + y_to_row(h, ymin, ymax)
         wick_bottom = plot_top + y_to_row(l, ymin, ymax)
@@ -1917,15 +1918,18 @@ def render_chart(data):
         hi = max(wick_top, wick_bottom)
         for r in range(lo, hi + 1):
             canvas[r][c] = WICK
-            candle_colors[(r, c)] = color
+            candle_colors[(r, c)] = base_color
 
         close_row = plot_top + y_to_row(close, ymin, ymax)
         body_ch = DOJI if abs(close - o) < 1e-8 else BODY
         canvas[close_row][c] = body_ch
-        candle_colors[(close_row, c)] = ACCENT if col == latest_candle_col else color
+        if active_investment:
+            candle_colors[(close_row, c)] = ACCENT
+        else:
+            candle_colors[(close_row, c)] = ACCENT if col == latest_candle_col else base_color
         close_markers.add((close_row, c))
 
-    last_r = plot_top + y_to_row(last_price, ymin, ymax)
+    last_r = plot_top + y_to_row(max(ymin, min(ymax, last_price)), ymin, ymax)
 
     put_label(canvas, plot_top + 0, f"${ymax:.2f}")
     put_label(canvas, plot_top + (PLOT_H // 2), f"${((ymax + ymin) / 2):.2f}")
@@ -2274,8 +2278,7 @@ live_status_box() {
 
   local gap=1
   local group_h=$((main_box_h + gap + footer_box_h))
-  local top=$(( (rows - group_h) / 2 ))
-  [ "$top" -lt 0 ] && top=0
+  local top=0
 
   local header_idx=-1
   for ((i=0; i<${#content[@]}; i++)); do
@@ -2320,9 +2323,6 @@ live_status_box() {
   printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' "$footer_left" "" "$footer_inside"
   printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$footer_left" "" "$footer_hline"
 
-  for ((i=0; i<rows-top-group_h; i++)); do
-    printf '%*s\n' "$cols" ""
-  done
 }
 
 secs_until_midnight_et() {
