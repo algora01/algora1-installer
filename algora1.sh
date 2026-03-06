@@ -1571,15 +1571,13 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-PLOT_W, PLOT_H = 70, 15
+PLOT_W, PLOT_H = 70, 18
 LEFT_PAD = 9
-BOTTOM_PAD = 4
-TOP_PAD = 4
-TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
+BOTTOM_PAD = 2
+TOP_PAD = 3
 WICK = "│"
 BODY = "▪"
 DOJI = "·"
-MARK = "•"
 WIDTH = 80
 HEIGHT = 24
 
@@ -1597,14 +1595,25 @@ def previous_trading_day(d: date) -> date:
         d -= timedelta(days=1)
     return d
 
+def next_trading_day(d: date) -> date:
+    d += timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
 def iso_z(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def market_anchor_day(now_et: datetime) -> date:
-    open_today = datetime.combine(now_et.date(), time(9, 30), tzinfo=ET)
+    d = now_et.date()
+    if d.weekday() >= 5:
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        return d
+    open_today = datetime.combine(d, time(9, 30), tzinfo=ET)
     if now_et >= open_today:
-        return now_et.date()
-    return previous_trading_day(now_et.date())
+        return d
+    return previous_trading_day(d)
 
 def fetch_intraday_bars(sym: str):
     key = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
@@ -1614,13 +1623,23 @@ def fetch_intraday_bars(sym: str):
 
     now_et = datetime.now(ET)
     day = market_anchor_day(now_et)
-    start = datetime.combine(day, time(9, 30), tzinfo=ET)
+    regular_open = datetime.combine(day, time(9, 30), tzinfo=ET)
     regular_close = datetime.combine(day, time(16, 0), tzinfo=ET)
-    after_close = datetime.combine(day, time(20, 0), tzinfo=ET)
+    next_open = datetime.combine(next_trading_day(day), time(9, 30), tzinfo=ET)
 
-    fetch_end = now_et if now_et.date() == day else after_close
+    after_hours_mode = now_et >= regular_close and now_et < next_open
+    if after_hours_mode:
+        start = regular_close
+        plot_end = next_open
+        time_labels = ["4:00 PM ET", "8:00 PM ET", "9:30 AM ET"]
+    else:
+        start = regular_open
+        plot_end = regular_close
+        time_labels = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
+
+    fetch_end = now_et
     if fetch_end < start:
-        fetch_end = regular_close
+        fetch_end = start
 
     params = {
         "symbols": sym,
@@ -1755,7 +1774,8 @@ def fetch_intraday_bars(sym: str):
     return {
         "day": day,
         "start": start,
-        "plot_end": regular_close,  # fixed session axis
+        "plot_end": plot_end,
+        "time_labels": time_labels,
         "bars": bars,
         "latest_price": latest_price,
         "latest_time": latest_time,
@@ -1809,9 +1829,9 @@ def render_error(msg: str):
 def render_chart(data):
     start = data["start"]
     plot_end = data["plot_end"]
+    time_labels = data.get("time_labels") or ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
     bars = data["bars"]
     latest_price = data.get("latest_price")
-    latest_time = data.get("latest_time")
     active_investment = bool(data.get("active_investment"))
 
     session_bars = [b for b in bars if b[0] <= plot_end]
@@ -1849,16 +1869,6 @@ def render_chart(data):
     for c in range(axis_x, W):
         canvas[axis_y][c] = "─"
     canvas[axis_y][axis_x] = "└"
-
-    # Blue marker always pins to the latest rendered candle.
-    marker_col = 0
-    marker_price = session_bars[-1][4]
-    for col in range(PLOT_W - 1, -1, -1):
-        candle = candles[col]
-        if candle is not None:
-            marker_col = col
-            marker_price = candle["c"]
-            break
 
     candle_colors = {}
     close_markers = set()
@@ -1902,10 +1912,7 @@ def render_chart(data):
         close_row = plot_top + y_to_row(close, ymin, ymax)
         close_markers.add((close_row, c))
 
-    last_r = plot_top + y_to_row(marker_price, ymin, ymax)
-    last_c = axis_x + 1 + marker_col
-    canvas[last_r][last_c] = MARK
-    last_point = (last_r, last_c)
+    last_r = plot_top + y_to_row(last_price, ymin, ymax)
 
     put_label(canvas, plot_top + 0, f"${ymax:.2f}")
     put_label(canvas, plot_top + (PLOT_H // 2), f"${((ymax + ymin) / 2):.2f}")
@@ -1915,9 +1922,9 @@ def render_chart(data):
     last_label_positions = {(last_r, col) for col in range(7)}
 
     ticks = [
-        (0, TIME_LABELS[0]),
-        (PLOT_W // 2, TIME_LABELS[1]),
-        (PLOT_W - 1, TIME_LABELS[2]),
+        (0, time_labels[0]),
+        (PLOT_W // 2, time_labels[1]),
+        (PLOT_W - 1, time_labels[2]),
     ]
     label_row = axis_y + 1
     for col, lab in ticks:
@@ -1937,13 +1944,6 @@ def render_chart(data):
     for i, ch in enumerate(title):
         canvas[title_row][title_start + i] = ch
 
-    subtitle = "IEX intraday OHLC (1m)"
-    sub_start = max(0, (W - len(subtitle)) // 2)
-    sub_row = 2
-    for i, ch in enumerate(subtitle):
-        if 0 <= sub_start + i < W:
-            canvas[sub_row][sub_start + i] = ch
-
     hint = "Press Ctrl+C to return"
     hint_row = TOP_PAD + (PLOT_H // 2)
     hint_start = max(axis_x + 2, (W - len(hint)) // 2)
@@ -1961,8 +1961,6 @@ def render_chart(data):
             if (r, c) in hint_positions:
                 row_chars.append(f"{MUTED}{ch}{RESET}")
             elif (r, c) in last_label_positions:
-                row_chars.append(f"{ACCENT}{ch}{RESET}")
-            elif (r, c) == last_point:
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
             elif active_investment and (r, c) in close_markers:
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
@@ -2117,6 +2115,15 @@ center_box() {
     # fallback: simple centered-ish (still vertically centered)
     printf "%b\n" "$msg"
   fi
+}
+
+live_status_box() {
+  local engine="$1"
+  local body="$2"
+  local compact
+  compact="$(printf "%s\n" "$body" | sed -n '1,10p')"
+  [ -n "$compact" ] || compact="(no status yet)"
+  center_box "$(printf "Live Status — %s\n\n%s\n\nPress Enter or Ctrl+C to return." "$engine" "$compact")"
 }
 
 secs_until_midnight_et() {
@@ -2383,6 +2390,13 @@ running_sessions_menu() {
     s_name="$s_raw"
     command -v session_pretty_name >/dev/null 2>&1 && s_name="$(session_pretty_name "$s_raw")"
 
+    hard_clear
+    if has_gum; then
+      gum style --border rounded --padding "1 2" --border-foreground 39 \
+        "$(printf "Running Session\nSession: %s\n\nChoose an action below." "$s_name")"
+      echo ""
+    fi
+
     action="$(choose "Running session" "Connect" "Delete session" "Back")"
 
     case "$action" in
@@ -2462,13 +2476,20 @@ live_status_menu() {
       status_txt="(no status yet)"
     fi
 
-    # Cursor-home redraw avoids full-screen clear flicker.
-    printf '\033[H' 2>/dev/null || true
-    printf '%s\n' "$status_txt"
-    printf '\033[J' 2>/dev/null || true
+    # Redraw a centered, themed status panel.
+    printf '\033[H\033[J' 2>/dev/null || true
+    live_status_box "$eng" "$status_txt"
     cursor_hide
-    ui_drain_input
-    sleep 1 || true
+
+    local key=""
+    if IFS= read -r -s -n 1 -t 1 key < /dev/tty; then
+      if [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
+        trap - INT TERM HUP
+        ui_view_mode_off
+        hard_clear
+        return 0
+      fi
+    fi
   done
 }
 
