@@ -1571,17 +1571,21 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-PLOT_W, PLOT_H = 70, 18
+PLOT_W, PLOT_H = 70, 15
 LEFT_PAD = 9
-BOTTOM_PAD = 2
-TOP_PAD = 3
+BOTTOM_PAD = 4
+TOP_PAD = 4
 TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
-DOT = "•"
-HIDOT = DOT
+WICK = "│"
+BODY = "█"
+DOJI = "─"
+MARK = "•"
 WIDTH = 80
-HEIGHT = TOP_PAD + PLOT_H + 1 + BOTTOM_PAD  # 24 rows (chart shifted down one)
+HEIGHT = 24
 
 ACCENT = "\033[38;5;39m"
+GREEN = "\033[38;5;34m"
+RED = "\033[38;5;160m"
 MUTED = "\033[38;5;245m"
 RESET = "\033[0m"
 
@@ -1644,21 +1648,24 @@ def fetch_intraday_bars(sym: str):
     except Exception as e:
         return None, f"IEX request failed: {e}"
 
-    bars = payload.get("bars", {}).get(sym, [])
-    points = []
-    for b in bars:
+    bars_raw = payload.get("bars", {}).get(sym, [])
+    bars = []
+    for b in bars_raw:
         t = b.get("t")
+        o = b.get("o")
+        h = b.get("h")
+        l = b.get("l")
         c = b.get("c")
-        if t is None or c is None:
+        if t is None or o is None or h is None or l is None or c is None:
             continue
         dt = datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(ET)
         if dt >= start:
-            points.append((dt, float(c)))
+            bars.append((dt, float(o), float(h), float(l), float(c)))
 
-    if not points:
+    if not bars:
         return None, f"No intraday IEX bars yet for {sym}."
 
-    latest_time = points[-1][0]
+    latest_time = bars[-1][0]
     active_investment = False
 
     # Active investment = live position exists for this symbol.
@@ -1749,7 +1756,7 @@ def fetch_intraday_bars(sym: str):
         "day": day,
         "start": start,
         "plot_end": regular_close,  # fixed session axis
-        "points": points,
+        "bars": bars,
         "latest_price": latest_price,
         "latest_time": latest_time,
         "active_investment": active_investment,
@@ -1760,24 +1767,27 @@ def y_to_row(v: float, ymin: float, ymax: float) -> int:
         return 0
     return int((ymax - v) / (ymax - ymin) * (PLOT_H - 1))
 
-def sample_points(points, start: datetime, plot_end: datetime):
+def build_candles(bars, start: datetime, plot_end: datetime):
     total = (plot_end - start).total_seconds()
     if total <= 0:
-        return [points[-1][1]] * PLOT_W
+        return [None] * PLOT_W
 
-    values = []
-    idx = 0
-    last_t = points[-1][0]
-    for col in range(PLOT_W):
-        ratio = col / (PLOT_W - 1) if PLOT_W > 1 else 0
-        target = start + timedelta(seconds=total * ratio)
-        if target > last_t:
-            values.append(None)
+    candles = [None] * PLOT_W
+    for dt, o, h, l, c in bars:
+        if dt < start or dt > plot_end:
             continue
-        while idx + 1 < len(points) and points[idx + 1][0] <= target:
-            idx += 1
-        values.append(points[idx][1])
-    return values
+        col = int(((dt - start).total_seconds() / total) * (PLOT_W - 1))
+        col = max(0, min(PLOT_W - 1, col))
+
+        cur = candles[col]
+        if cur is None:
+            candles[col] = {"o": o, "h": h, "l": l, "c": c}
+        else:
+            cur["h"] = max(cur["h"], h)
+            cur["l"] = min(cur["l"], l)
+            cur["c"] = c
+
+    return candles
 
 def put_label(canvas, row: int, text: str):
     s = f"{text:>7}"
@@ -1799,21 +1809,25 @@ def render_error(msg: str):
 def render_chart(data):
     start = data["start"]
     plot_end = data["plot_end"]
-    points = data["points"]
+    bars = data["bars"]
     latest_price = data.get("latest_price")
     latest_time = data.get("latest_time")
     active_investment = bool(data.get("active_investment"))
 
-    session_points = [p for p in points if p[0] <= plot_end]
-    if not session_points:
-        session_points = [(start, points[0][1])]
+    session_bars = [b for b in bars if b[0] <= plot_end]
+    if not session_bars:
+        session_bars = [bars[0]]
 
-    y = sample_points(session_points, start, plot_end)
-    last_price = float(latest_price) if latest_price is not None else points[-1][1]
-    y_present = [v for v in y if v is not None]
-    if not y_present:
-        y_present = [last_price]
-    ymin, ymax = min(min(y_present), last_price), max(max(y_present), last_price)
+    candles = build_candles(session_bars, start, plot_end)
+    last_price = float(latest_price) if latest_price is not None else session_bars[-1][4]
+    y_values = [last_price]
+    for c in candles:
+        if c is None:
+            continue
+        y_values.append(c["l"])
+        y_values.append(c["h"])
+
+    ymin, ymax = min(y_values), max(y_values)
     if ymax == ymin:
         ymax += 0.5
         ymin -= 0.5
@@ -1838,7 +1852,7 @@ def render_chart(data):
 
     # Keep the moving marker tied to real/latest time.
     if latest_time is None:
-        latest_time = points[-1][0]
+        latest_time = session_bars[-1][0]
     if latest_time < start:
         latest_time = start
     if latest_time > plot_end:
@@ -1847,26 +1861,53 @@ def render_chart(data):
     marker_col = int(((latest_time - start).total_seconds() / total_secs) * (PLOT_W - 1)) if total_secs > 0 else 0
     marker_col = max(0, min(PLOT_W - 1, marker_col))
 
-    completed_positions = set()
-
-    for col, val in enumerate(y):
-        if val is None:
+    candle_colors = {}
+    close_markers = set()
+    for col, candle in enumerate(candles):
+        if candle is None:
             continue
-        r = plot_top + y_to_row(val, ymin, ymax)
+
         c = axis_x + 1 + col
-        canvas[r][c] = DOT
-        completed_positions.add((r, c))
+        o = candle["o"]
+        h = candle["h"]
+        l = candle["l"]
+        close = candle["c"]
+        color = GREEN if close >= o else RED
+
+        wick_top = plot_top + y_to_row(h, ymin, ymax)
+        wick_bottom = plot_top + y_to_row(l, ymin, ymax)
+        lo = min(wick_top, wick_bottom)
+        hi = max(wick_top, wick_bottom)
+        for r in range(lo, hi + 1):
+            canvas[r][c] = WICK
+            candle_colors[(r, c)] = color
+
+        body_top = plot_top + y_to_row(max(o, close), ymin, ymax)
+        body_bottom = plot_top + y_to_row(min(o, close), ymin, ymax)
+        lo = min(body_top, body_bottom)
+        hi = max(body_top, body_bottom)
+        if lo == hi:
+            canvas[lo][c] = DOJI
+            candle_colors[(lo, c)] = color
+        else:
+            for r in range(lo, hi + 1):
+                canvas[r][c] = BODY
+                candle_colors[(r, c)] = color
+
+        close_row = plot_top + y_to_row(close, ymin, ymax)
+        close_markers.add((close_row, c))
 
     last_r = plot_top + y_to_row(last_price, ymin, ymax)
     last_c = axis_x + 1 + marker_col
-    canvas[last_r][last_c] = DOT
+    canvas[last_r][last_c] = MARK
     last_point = (last_r, last_c)
-    put_label(canvas, last_r, f"${last_price:.2f}")
-    last_label_row = last_r
 
     put_label(canvas, plot_top + 0, f"${ymax:.2f}")
     put_label(canvas, plot_top + (PLOT_H // 2), f"${((ymax + ymin) / 2):.2f}")
     put_label(canvas, plot_top + (PLOT_H - 1), f"${ymin:.2f}")
+
+    put_label(canvas, last_r, f"${last_price:.2f}")
+    last_label_positions = {(last_r, col) for col in range(7)}
 
     ticks = [
         (0, TIME_LABELS[0]),
@@ -1885,11 +1926,18 @@ def render_chart(data):
             for k, ch in enumerate(lab):
                 canvas[label_row][start_col + k] = ch
 
-    title = f"{symbol} Daily Performance"
+    title = f"{symbol} Daily Candlesticks"
     title_start = max(0, (W - len(title)) // 2)
     title_row = 1
     for i, ch in enumerate(title):
         canvas[title_row][title_start + i] = ch
+
+    subtitle = "IEX intraday OHLC (1m)"
+    sub_start = max(0, (W - len(subtitle)) // 2)
+    sub_row = 2
+    for i, ch in enumerate(subtitle):
+        if 0 <= sub_start + i < W:
+            canvas[sub_row][sub_start + i] = ch
 
     hint = "Press Ctrl+C to return"
     hint_row = TOP_PAD + (PLOT_H // 2)
@@ -1907,12 +1955,14 @@ def render_chart(data):
         for c, ch in enumerate(canvas[r]):
             if (r, c) in hint_positions:
                 row_chars.append(f"{MUTED}{ch}{RESET}")
-            elif (r == last_label_row and 0 <= c < 7):
+            elif (r, c) in last_label_positions:
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
             elif (r, c) == last_point:
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
-            elif active_investment and (r, c) in completed_positions:
+            elif active_investment and (r, c) in close_markers:
                 row_chars.append(f"{ACCENT}{ch}{RESET}")
+            elif (r, c) in candle_colors:
+                row_chars.append(f"{candle_colors[(r, c)]}{ch}{RESET}")
             else:
                 row_chars.append(ch)
         lines.append("".join(row_chars))
@@ -2374,6 +2424,7 @@ live_status_menu() {
   # Safety: if SSH drops or the script is terminated, restore tty + cursor
   trap 'trap - INT TERM HUP; ui_view_mode_off; exit 0' TERM HUP
 
+  hard_clear
   while true; do
     if [ "$stop" -eq 1 ]; then
       trap - INT TERM HUP
@@ -2398,10 +2449,18 @@ live_status_menu() {
     local file
     file="$(live_status_for_engine "$eng")"
 
-    hard_clear
     cursor_hide
     touch "$file" >/dev/null 2>&1 || true
-    cat "$file" 2>/dev/null || echo "(no status yet)"
+    local status_txt
+    status_txt="$(cat "$file" 2>/dev/null || true)"
+    if [ -z "$status_txt" ]; then
+      status_txt="(no status yet)"
+    fi
+
+    # Cursor-home redraw avoids full-screen clear flicker.
+    printf '\033[H' 2>/dev/null || true
+    printf '%s\n' "$status_txt"
+    printf '\033[J' 2>/dev/null || true
     cursor_hide
     ui_drain_input
     sleep 1 || true
