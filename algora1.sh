@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_737815c5aecc4cdeb5ba0267a15c0ab6.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c668f111433a41b7a2c27259a5542689.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_97743b6e9e51430092a519df0b05030a.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_2f90a34ae3b84db88135e70b0982aa1c.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_38139453eb8147d2aada99e4ba4a3df6.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a1e6c53cfc64a9eae0a48416fb4802e.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d155ac78d124d3ab470ad349efb3ce1.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d3a5845dce34f1caf3f17040fa13eec.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -2172,6 +2172,7 @@ live_status_box() {
   [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
   [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
 
+  local footer_txt="Press Enter to return."
   local -a body_lines=()
   local blank_run=0
   while IFS= read -r ln; do
@@ -2192,7 +2193,6 @@ live_status_box() {
     blank_run=0
 
     if [[ "$plain" == *"Ctrl+C to go back"* ]] || [[ "$plain" == "Press Enter to return."* ]]; then
-      body_lines+=("Press Enter to return.")
       continue
     fi
     body_lines+=("$ln")
@@ -2217,31 +2217,10 @@ live_status_box() {
     body_lines+=("(no status yet)")
   fi
 
-  # Ensure Enter footer exists exactly once.
-  local has_footer=0
-  local ln plain
-  for ln in "${body_lines[@]}"; do
-    plain="$(strip_ansi "$ln")"
-    if [[ "$plain" == "Press Enter to return."* ]]; then
-      has_footer=1
-      break
-    fi
-  done
-
-  if [ "$has_footer" -eq 0 ]; then
-    body_lines+=("")
-    body_lines+=("Press Enter to return.")
-  fi
-
-  # Build compact content with exactly one blank line at top/bottom inside border.
-  local -a content=()
-  content+=("")
-  for ln in "${body_lines[@]}"; do
-    content+=("$ln")
-  done
-  content+=("")
-
+  # Build compact main content with exactly one blank line at top/bottom inside border.
+  local -a content=("" "${body_lines[@]}" "")
   local -a compact=()
+  local ln plain
   blank_run=0
   for ln in "${content[@]}"; do
     plain="$(strip_ansi "$ln")"
@@ -2257,38 +2236,46 @@ live_status_box() {
   done
   content=("${compact[@]}")
 
-  # Fit box height tightly to content while leaving at least one terminal row margin.
-  local max_content=$((rows - 4))
-  [ "$max_content" -lt 6 ] && max_content=6
+  # Fit main content to screen while preserving footer mini-box.
+  local max_content=$((rows - 7))
+  [ "$max_content" -lt 5 ] && max_content=5
   if [ "${#content[@]}" -gt "$max_content" ]; then
     local keep_head=$((max_content - 2))
     [ "$keep_head" -lt 3 ] && keep_head=3
-    content=("${content[@]:0:$keep_head}" "" "Press Enter to return.")
+    content=("${content[@]:0:$keep_head}" "")
   fi
 
-  # Width follows longest visible line so border matches text better.
+  # Width follows longest visible line so border matches text.
   local longest=0
   for ln in "${content[@]}"; do
     plain="$(strip_ansi "$ln")"
     [ "${#plain}" -gt "$longest" ] && longest="${#plain}"
   done
 
-  local inner_w=$((longest + 4))
-  [ "$inner_w" -lt 48 ] && inner_w=48
-  local max_inner_w=$((cols - 6))
-  [ "$inner_w" -gt "$max_inner_w" ] && inner_w="$max_inner_w"
-  [ "$inner_w" -lt 20 ] && inner_w=20
+  local main_text_w="$longest"
+  [ "$main_text_w" -lt 52 ] && main_text_w=52
+  local max_text_w=$((cols - 8))
+  [ "$main_text_w" -gt "$max_text_w" ] && main_text_w="$max_text_w"
+  [ "$main_text_w" -lt 20 ] && main_text_w=20
 
-  local box_w=$((inner_w + 2))
-  local box_h=$(( ${#content[@]} + 2 ))
-  local left=$(( (cols - box_w) / 2 ))
-  [ "$left" -lt 0 ] && left=0
-  local top=$(( (rows - box_h) / 2 ))
-  [ "$top" -lt 1 ] && top=1
+  local main_box_w=$((main_text_w + 4))
+  local main_box_h=$(( ${#content[@]} + 2 ))
+  local main_left=$(( (cols - main_box_w) / 2 ))
+  [ "$main_left" -lt 0 ] && main_left=0
 
-  local hline
-  printf -v hline '%*s' "$inner_w" ''
-  hline="${hline// /─}"
+  local footer_text_w="${#footer_txt}"
+  [ "$footer_text_w" -lt 24 ] && footer_text_w=24
+  [ "$footer_text_w" -gt "$max_text_w" ] && footer_text_w="$max_text_w"
+  [ "$footer_text_w" -gt "$main_text_w" ] && footer_text_w="$main_text_w"
+  local footer_box_w=$((footer_text_w + 4))
+  local footer_box_h=3
+  local footer_left=$(( (cols - footer_box_w) / 2 ))
+  [ "$footer_left" -lt 0 ] && footer_left=0
+
+  local gap=1
+  local group_h=$((main_box_h + gap + footer_box_h))
+  local top=$(( (rows - group_h) / 2 ))
+  [ "$top" -lt 0 ] && top=0
 
   local header_idx=-1
   for ((i=0; i<${#content[@]}; i++)); do
@@ -2304,23 +2291,36 @@ live_status_box() {
     printf '%*s\n' "$cols" ""
   done
 
-  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" "" "$hline"
+  local hline
+  printf -v hline '%*s' "$((main_box_w - 2))" ''
+  hline="${hline// /─}"
+  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$main_left" "" "$hline"
   for ((i=0; i<${#content[@]}; i++)); do
     local txt="" inside plain
     txt="${content[$i]}"
     plain="$(strip_ansi "$txt")"
     if [ "$i" -eq "$header_idx" ]; then
-      inside="$(left_ansi "$txt" "$inner_w")"
+      inside="$(left_ansi "$txt" "$main_text_w")"
     elif [[ "$plain" =~ ^[[:space:]]*$ ]]; then
-      printf -v inside '%*s' "$inner_w" ""
+      printf -v inside '%*s' "$main_text_w" ""
     else
-      inside="$(center_ansi "$txt" "$inner_w")"
+      inside="$(center_ansi "$txt" "$main_text_w")"
     fi
-    printf '%*s\033[38;5;39m│\033[0m%s\033[38;5;39m│\033[0m\n' "$left" "" "$inside"
+    printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' "$main_left" "" "$inside"
   done
-  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" "" "$hline"
+  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$main_left" "" "$hline"
 
-  for ((i=0; i<rows-top-box_h; i++)); do
+  printf '%*s\n' "$cols" ""
+
+  local footer_hline footer_inside
+  printf -v footer_hline '%*s' "$((footer_box_w - 2))" ''
+  footer_hline="${footer_hline// /─}"
+  footer_inside="$(center_ansi "$footer_txt" "$footer_text_w")"
+  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$footer_left" "" "$footer_hline"
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' "$footer_left" "" "$footer_inside"
+  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$footer_left" "" "$footer_hline"
+
+  for ((i=0; i<rows-top-group_h; i++)); do
     printf '%*s\n' "$cols" ""
   done
 }
