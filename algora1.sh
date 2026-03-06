@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b608b90223094f6d8b3e1f264bd19368.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_72473b242db6485cb5bfa43b7acdbb4b.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6918310e8cef462f805f5f4017471404.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_086d627cd1674640a0c38e96a4884398.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b05c1321566547cf9e9afa35a2fca5b4.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_93e533da5fa045c58d29de95f6b0fe57.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_9df85ffbd8d143be90925ef5fbfe7bab.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_59a801a38eca43ebb014e73691e37f4b.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1571,10 +1571,10 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-PLOT_W, PLOT_H = 70, 18
+PLOT_W, PLOT_H = 70, 17
 LEFT_PAD = 9
 BOTTOM_PAD = 2
-TOP_PAD = 3
+TOP_PAD = 4
 WICK = "│"
 BODY = "▪"
 DOJI = "·"
@@ -1840,6 +1840,15 @@ def render_chart(data):
 
     candles = build_candles(session_bars, start, plot_end)
     last_price = float(latest_price) if latest_price is not None else session_bars[-1][4]
+    for col in range(PLOT_W - 1, -1, -1):
+        candle = candles[col]
+        if candle is None:
+            continue
+        candle["c"] = last_price
+        candle["h"] = max(candle["h"], last_price)
+        candle["l"] = min(candle["l"], last_price)
+        break
+
     y_values = [last_price]
     for c in candles:
         if c is None:
@@ -1951,7 +1960,7 @@ def render_chart(data):
         canvas[title_row][title_start + i] = ch
 
     hint = "Press Ctrl+C to return"
-    hint_row = H - 1
+    hint_row = 2
     hint_start = max(axis_x + 2, (W - len(hint)) // 2)
     hint_positions = set()
     for i, ch in enumerate(hint):
@@ -2183,8 +2192,6 @@ live_status_box() {
   fi
 
   local -a content=()
-  content+=("Live Status — ${engine}")
-  content+=("")
   content+=("${body_lines[@]}")
   content+=("")
   content+=("Press Enter or Ctrl+C to return.")
@@ -2199,14 +2206,14 @@ live_status_box() {
     printf '%*s\n' "$cols" ""
   done
 
-  printf '%*s\033[38;5;39m┌%s┐\033[0m\n' "$left" "" "$hline"
+  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" "" "$hline"
   for ((i=0; i<max_content; i++)); do
     local txt="" inside
     [ "$i" -lt "${#content[@]}" ] && txt="${content[$i]}"
     inside="$(center_ansi "$txt" "$inner_w")"
     printf '%*s\033[38;5;39m│\033[0m%s\033[38;5;39m│\033[0m\n' "$left" "" "$inside"
   done
-  printf '%*s\033[38;5;39m└%s┘\033[0m\n' "$left" "" "$hline"
+  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" "" "$hline"
 
   for ((i=0; i<rows-top-box_h; i++)); do
     printf '%*s\n' "$cols" ""
@@ -2480,7 +2487,7 @@ running_sessions_menu() {
     hard_clear
     if has_gum; then
       gum style --border rounded --padding "1 2" --border-foreground 39 \
-        "$(printf "Running Session\nSession: %s\n\nChoose an action below." "$s_name")"
+        "$(printf "Running Session\nSession: %s" "$s_name")"
       echo ""
     fi
 
