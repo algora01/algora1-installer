@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_38139453eb8147d2aada99e4ba4a3df6.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a1e6c53cfc64a9eae0a48416fb4802e.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d155ac78d124d3ab470ad349efb3ce1.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d3a5845dce34f1caf3f17040fa13eec.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b608b90223094f6d8b3e1f264bd19368.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_72473b242db6485cb5bfa43b7acdbb4b.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6918310e8cef462f805f5f4017471404.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_086d627cd1674640a0c38e96a4884398.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1870,6 +1870,12 @@ def render_chart(data):
         canvas[axis_y][c] = "─"
     canvas[axis_y][axis_x] = "└"
 
+    latest_candle_col = -1
+    for col in range(PLOT_W - 1, -1, -1):
+        if candles[col] is not None:
+            latest_candle_col = col
+            break
+
     candle_colors = {}
     close_markers = set()
     for col, candle in enumerate(candles):
@@ -1881,7 +1887,7 @@ def render_chart(data):
         h = candle["h"]
         l = candle["l"]
         close = candle["c"]
-        color = GREEN if close >= o else RED
+        color = ACCENT if col == latest_candle_col else (GREEN if close >= o else RED)
 
         wick_top = plot_top + y_to_row(h, ymin, ymax)
         wick_bottom = plot_top + y_to_row(l, ymin, ymax)
@@ -1945,7 +1951,7 @@ def render_chart(data):
         canvas[title_row][title_start + i] = ch
 
     hint = "Press Ctrl+C to return"
-    hint_row = TOP_PAD + (PLOT_H // 2)
+    hint_row = H - 1
     hint_start = max(axis_x + 2, (W - len(hint)) // 2)
     hint_positions = set()
     for i, ch in enumerate(hint):
@@ -2117,13 +2123,94 @@ center_box() {
   fi
 }
 
+strip_ansi() {
+  printf '%s' "$1" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g'
+}
+
+center_ansi() {
+  local txt="$1"
+  local width="$2"
+  local plain len lp rp
+  plain="$(strip_ansi "$txt")"
+  len="${#plain}"
+  if [ "$len" -gt "$width" ]; then
+    txt="${plain:0:$width}"
+    len="$width"
+  fi
+  lp=$(( (width - len) / 2 ))
+  rp=$(( width - len - lp ))
+  printf "%*s%s%*s" "$lp" "" "$txt" "$rp" ""
+}
+
 live_status_box() {
   local engine="$1"
   local body="$2"
-  local compact
-  compact="$(printf "%s\n" "$body" | sed -n '1,10p')"
-  [ -n "$compact" ] || compact="(no status yet)"
-  center_box "$(printf "Live Status — %s\n\n%s\n\nPress Enter or Ctrl+C to return." "$engine" "$compact")"
+
+  local rows=24 cols=80
+  local box_w=72 box_h=16
+  local inner_w=$((box_w - 2))
+  local left=$(( (cols - box_w) / 2 ))
+  local top=$(( (rows - box_h) / 2 ))
+
+  local hline
+  printf -v hline '%*s' $((box_w - 2)) ''
+  hline="${hline// /─}"
+
+  local -a body_lines=()
+  local prev_blank=0
+  while IFS= read -r ln; do
+    local plain
+    plain="$(strip_ansi "$ln")"
+
+    # Drop hard separators from legacy status writers.
+    if [[ "$plain" =~ ^[[:space:]]*[─-]{4,}[[:space:]]*$ ]]; then
+      continue
+    fi
+    if [[ "$plain" =~ ^[[:space:]]*$ ]]; then
+      if [ "$prev_blank" -eq 0 ]; then
+        body_lines+=("")
+        prev_blank=1
+      fi
+      continue
+    fi
+    prev_blank=0
+    body_lines+=("$ln")
+    [ "${#body_lines[@]}" -ge 8 ] && break
+  done < <(printf "%s\n" "$body" | sed 's/\r//g')
+
+  if [ "${#body_lines[@]}" -eq 0 ]; then
+    body_lines+=("(no status yet)")
+  fi
+
+  local -a content=()
+  content+=("Live Status — ${engine}")
+  content+=("")
+  content+=("${body_lines[@]}")
+  content+=("")
+  content+=("Press Enter or Ctrl+C to return.")
+
+  local max_content=$((box_h - 2))
+  if [ "${#content[@]}" -gt "$max_content" ]; then
+    content=("${content[@]:0:$max_content}")
+  fi
+
+  printf '\033[H' 2>/dev/null || true
+  for ((i=0; i<top; i++)); do
+    printf '%*s\n' "$cols" ""
+  done
+
+  printf '%*s\033[38;5;39m┌%s┐\033[0m\n' "$left" "" "$hline"
+  for ((i=0; i<max_content; i++)); do
+    local txt="" inside
+    [ "$i" -lt "${#content[@]}" ] && txt="${content[$i]}"
+    inside="$(center_ansi "$txt" "$inner_w")"
+    printf '%*s\033[38;5;39m│\033[0m%s\033[38;5;39m│\033[0m\n' "$left" "" "$inside"
+  done
+  printf '%*s\033[38;5;39m└%s┘\033[0m\n' "$left" "" "$hline"
+
+  for ((i=0; i<rows-top-box_h; i++)); do
+    printf '%*s\n' "$cols" ""
+  done
 }
 
 secs_until_midnight_et() {
@@ -2444,6 +2531,7 @@ live_status_menu() {
   trap 'trap - INT TERM HUP; ui_view_mode_off; exit 0' TERM HUP
 
   hard_clear
+  local last_render=""
   while true; do
     if [ "$stop" -eq 1 ]; then
       trap - INT TERM HUP
@@ -2476,10 +2564,13 @@ live_status_menu() {
       status_txt="(no status yet)"
     fi
 
-    # Redraw a centered, themed status panel.
-    printf '\033[H\033[J' 2>/dev/null || true
-    live_status_box "$eng" "$status_txt"
-    cursor_hide
+    # Redraw only on actual content change to prevent twitching.
+    local render_key="${eng}::${status_txt}"
+    if [ "$render_key" != "$last_render" ]; then
+      live_status_box "$eng" "$status_txt"
+      last_render="$render_key"
+      cursor_hide
+    fi
 
     local key=""
     if IFS= read -r -s -n 1 -t 1 key < /dev/tty; then
