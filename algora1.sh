@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_25bc0db23d444c68b47561f1a939ea7f.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_457ab99a77da4cb7a284837b95bf9173.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_05cdd772fa6449e2aa9a3b63d5e839ab.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_d9c1002336a742199a6b0ba20758ef5f.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8e0d7e2e06b14dfbbd61e77bcfc2a685.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b089c5b2af504d5a98f42c973549fd59.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e59cf2ba10e84219b666f9d4c14197b8.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_bc1c455b3bd74a0685cdeb50c020bdcb.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -2303,6 +2303,8 @@ live_status_box() {
     txt="${content[$i]}"
     plain="$(strip_ansi "$txt")"
     if [ "$i" -eq "$header_idx" ]; then
+      inside="$(left_ansi "$txt" "$main_text_w")"
+    elif [[ "$plain" == Equity:* ]] || [[ "$plain" == "Total P&L:"* ]]; then
       inside="$(left_ansi "$txt" "$main_text_w")"
     elif [[ "$plain" =~ ^[[:space:]]*$ ]]; then
       printf -v inside '%*s' "$main_text_w" ""
