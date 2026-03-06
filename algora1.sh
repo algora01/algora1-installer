@@ -1577,8 +1577,8 @@ BOTTOM_PAD = 4
 TOP_PAD = 4
 TIME_LABELS = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
 WICK = "│"
-BODY = "█"
-DOJI = "─"
+BODY = "▪"
+DOJI = "·"
 MARK = "•"
 WIDTH = 80
 HEIGHT = 24
@@ -1832,7 +1832,7 @@ def render_chart(data):
         ymax += 0.5
         ymin -= 0.5
     else:
-        pad = max(0.01, (ymax - ymin) * 0.07)
+        pad = max(0.01, (ymax - ymin) * 0.14)
         ymax += pad
         ymin -= pad
 
@@ -1850,16 +1850,15 @@ def render_chart(data):
         canvas[axis_y][c] = "─"
     canvas[axis_y][axis_x] = "└"
 
-    # Keep the moving marker tied to real/latest time.
-    if latest_time is None:
-        latest_time = session_bars[-1][0]
-    if latest_time < start:
-        latest_time = start
-    if latest_time > plot_end:
-        latest_time = plot_end
-    total_secs = (plot_end - start).total_seconds()
-    marker_col = int(((latest_time - start).total_seconds() / total_secs) * (PLOT_W - 1)) if total_secs > 0 else 0
-    marker_col = max(0, min(PLOT_W - 1, marker_col))
+    # Blue marker always pins to the latest rendered candle.
+    marker_col = 0
+    marker_price = session_bars[-1][4]
+    for col in range(PLOT_W - 1, -1, -1):
+        candle = candles[col]
+        if candle is not None:
+            marker_col = col
+            marker_price = candle["c"]
+            break
 
     candle_colors = {}
     close_markers = set()
@@ -1890,14 +1889,20 @@ def render_chart(data):
             canvas[lo][c] = DOJI
             candle_colors[(lo, c)] = color
         else:
-            for r in range(lo, hi + 1):
-                canvas[r][c] = BODY
-                candle_colors[(r, c)] = color
+            # Compact candle body for cleaner 80x24 readability.
+            canvas[lo][c] = BODY
+            candle_colors[(lo, c)] = color
+            canvas[hi][c] = BODY
+            candle_colors[(hi, c)] = color
+            if hi - lo >= 3:
+                mid = (lo + hi) // 2
+                canvas[mid][c] = BODY
+                candle_colors[(mid, c)] = color
 
         close_row = plot_top + y_to_row(close, ymin, ymax)
         close_markers.add((close_row, c))
 
-    last_r = plot_top + y_to_row(last_price, ymin, ymax)
+    last_r = plot_top + y_to_row(marker_price, ymin, ymax)
     last_c = axis_x + 1 + marker_col
     canvas[last_r][last_c] = MARK
     last_point = (last_r, last_c)
