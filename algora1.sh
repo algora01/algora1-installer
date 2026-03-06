@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c8aa4a349d42473d9516bc1430aeadc5.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a2eac6c1097f4e32be9794951f29350f.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c1c51227079241f08a81508ed55ac733.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_90dd81057d08484788d602f796a8dcf8.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_874e610bd2ca408e8415156cb3602cc9.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c6d16803c1714ae2802751a018d04701.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6234d0c05e1f4e0bbf465abd2b09d44a.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_23ffc87912c4418f83e4ff5f3232e411.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -2336,8 +2336,6 @@ live_status_box() {
 
   local main_box_w=$((main_text_w + 4))
   local main_box_h=$(( ${#content[@]} + 2 ))
-  local main_left=$(( (cols - main_box_w) / 2 ))
-  [ "$main_left" -lt 0 ] && main_left=0
 
   local footer_text_w="${#footer_txt}"
   [ "$footer_text_w" -lt 24 ] && footer_text_w=24
@@ -2345,8 +2343,14 @@ live_status_box() {
   [ "$footer_text_w" -gt "$main_text_w" ] && footer_text_w="$main_text_w"
   local footer_box_w=$((footer_text_w + 4))
   local footer_box_h=3
-  local footer_left=$(( (cols - footer_box_w) / 2 ))
-  [ "$footer_left" -lt 0 ] && footer_left=0
+  
+  # Center both boxes as a single grouped block.
+  local group_w="$main_box_w"
+  [ "$footer_box_w" -gt "$group_w" ] && group_w="$footer_box_w"
+  local group_left=$(( (cols - group_w) / 2 ))
+  [ "$group_left" -lt 0 ] && group_left=0
+  local main_left=$((group_left + (group_w - main_box_w) / 2))
+  local footer_left=$((group_left + (group_w - footer_box_w) / 2))
 
   local gap=1
   local group_h=$((main_box_h + gap + footer_box_h))
@@ -2362,15 +2366,12 @@ live_status_box() {
     fi
   done
 
-  printf '\033[H' 2>/dev/null || true
-  for ((i=0; i<top; i++)); do
-    printf '%*s\n' "$cols" ""
-  done
+  printf '\033[%d;1H' "$((top + 1))" 2>/dev/null || true
 
   local hline
   printf -v hline '%*s' "$((main_box_w - 2))" ''
   hline="${hline// /─}"
-  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$main_left" "" "$hline"
+  printf '%*s\033[38;5;39m╭%s╮\033[0m\033[K\n' "$main_left" "" "$hline"
   for ((i=0; i<${#content[@]}; i++)); do
     local txt="" inside plain
     txt="${content[$i]}"
@@ -2384,26 +2385,19 @@ live_status_box() {
     else
       inside="$(center_ansi "$txt" "$main_text_w")"
     fi
-    printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' "$main_left" "" "$inside"
+    printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\033[K\n' "$main_left" "" "$inside"
   done
-  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$main_left" "" "$hline"
+  printf '%*s\033[38;5;39m╰%s╯\033[0m\033[K\n' "$main_left" "" "$hline"
 
-  printf '%*s\n' "$cols" ""
+  printf '\033[K\n'
 
   local footer_hline footer_inside
   printf -v footer_hline '%*s' "$((footer_box_w - 2))" ''
   footer_hline="${footer_hline// /─}"
   footer_inside="$(center_ansi "$footer_txt" "$footer_text_w")"
-  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$footer_left" "" "$footer_hline"
-  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' "$footer_left" "" "$footer_inside"
-  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$footer_left" "" "$footer_hline"
-
-  local used=$((top + main_box_h + 1 + footer_box_h))
-  if [ "$used" -lt "$rows" ]; then
-    for ((i=used; i<rows; i++)); do
-      printf '%*s\n' "$cols" ""
-    done
-  fi
+  printf '%*s\033[38;5;39m╭%s╮\033[0m\033[K\n' "$footer_left" "" "$footer_hline"
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\033[K\n' "$footer_left" "" "$footer_inside"
+  printf '%*s\033[38;5;39m╰%s╯\033[0m\033[K\n' "$footer_left" "" "$footer_hline"
 
 }
 
