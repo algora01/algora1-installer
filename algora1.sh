@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_970fd5ccf8254ad18cf6c5d89d63a353.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_43e3b18d5f1345ea930d606febb6c8ad.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e7fb33081d3f4340a483cc7951098f9a.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_04b4700c9043495694f1458daa30e5d1.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_38139453eb8147d2aada99e4ba4a3df6.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a1e6c53cfc64a9eae0a48416fb4802e.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d155ac78d124d3ab470ad349efb3ce1.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d3a5845dce34f1caf3f17040fa13eec.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1639,20 +1639,32 @@ def fetch_intraday_bars(sym: str):
     regular_open = datetime.combine(day, time(9, 30), tzinfo=ET)
     regular_close = datetime.combine(day, time(16, 0), tzinfo=ET)
     next_open = datetime.combine(next_trading_day(day), time(9, 30), tzinfo=ET)
+    start = regular_open
+    plot_end = regular_close
+    time_labels = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
 
-    after_hours_mode = now_et >= regular_close and now_et < next_open
-    if after_hours_mode:
-        start = regular_close
-        plot_end = next_open
-        time_labels = ["4:00 PM ET", "8:00 PM ET", "9:30 AM ET"]
+    # Keep the closed-session chart visible overnight, then clear in the
+    # 10-minute pre-open window before the next regular session.
+    pre_open_reset_start = next_open - timedelta(minutes=10)
+    if pre_open_reset_start <= now_et < next_open:
+        return {
+            "day": day,
+            "start": start,
+            "plot_end": plot_end,
+            "time_labels": time_labels,
+            "bars": [],
+            "latest_price": None,
+            "latest_time": now_et,
+            "active_investment": False,
+            "preopen_clear": True,
+        }, None
+
+    if now_et < regular_open:
+        fetch_end = regular_close
+    elif now_et >= regular_close:
+        fetch_end = regular_close
     else:
-        start = regular_open
-        plot_end = regular_close
-        time_labels = ["9:30 AM ET", "12:00 PM ET", "4:00 PM ET"]
-
-    fetch_end = now_et
-    if fetch_end < start:
-        fetch_end = start
+        fetch_end = now_et
 
     params = {
         "symbols": sym,
@@ -1691,7 +1703,7 @@ def fetch_intraday_bars(sym: str):
         if t is None or o is None or h is None or l is None or c is None:
             continue
         dt = datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(ET)
-        if dt >= start:
+        if start <= dt <= regular_close:
             bars.append((dt, float(o), float(h), float(l), float(c)))
 
     if not bars:
@@ -1721,68 +1733,70 @@ def fetch_intraday_bars(sym: str):
     except Exception:
         active_investment = False
 
-    # Pull a fresher print so latest marker can move between 1-min bars.
     latest_price = None
-    quote_url = "https://data.alpaca.markets/v2/stocks/quotes/latest?" + urllib.parse.urlencode({
-        "symbols": sym,
-        "feed": "iex",
-    })
-    quote_req = urllib.request.Request(
-        quote_url,
-        headers={
-            "APCA-API-KEY-ID": key,
-            "APCA-API-SECRET-KEY": secret,
-            "accept": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(quote_req, timeout=5) as resp:
-            q_payload = json.loads(resp.read().decode("utf-8"))
-            quote = q_payload.get("quotes", {}).get(sym, {})
-            ap = quote.get("ap")
-            bp = quote.get("bp")
-            qt = quote.get("t")
-            if ap is not None and bp is not None and ap > 0 and bp > 0:
-                latest_price = (float(ap) + float(bp)) / 2.0
-            elif ap is not None and ap > 0:
-                latest_price = float(ap)
-            elif bp is not None and bp > 0:
-                latest_price = float(bp)
-            if qt:
-                qdt = datetime.fromisoformat(qt.replace("Z", "+00:00")).astimezone(ET)
-                if qdt > latest_time:
-                    latest_time = qdt
-    except Exception:
-        latest_price = None
-
-    # Fallback to latest trade if quote isn't available.
-    trade_url = "https://data.alpaca.markets/v2/stocks/trades/latest?" + urllib.parse.urlencode({
-        "symbols": sym,
-        "feed": "iex",
-    })
-    trade_req = urllib.request.Request(
-        trade_url,
-        headers={
-            "APCA-API-KEY-ID": key,
-            "APCA-API-SECRET-KEY": secret,
-            "accept": "application/json",
-        },
-    )
-    if latest_price is None:
+    # During regular session, pull a fresher print so the latest candle can move
+    # between 1-minute bars. Outside regular hours, freeze at the session close.
+    if regular_open <= now_et < regular_close:
+        quote_url = "https://data.alpaca.markets/v2/stocks/quotes/latest?" + urllib.parse.urlencode({
+            "symbols": sym,
+            "feed": "iex",
+        })
+        quote_req = urllib.request.Request(
+            quote_url,
+            headers={
+                "APCA-API-KEY-ID": key,
+                "APCA-API-SECRET-KEY": secret,
+                "accept": "application/json",
+            },
+        )
         try:
-            with urllib.request.urlopen(trade_req, timeout=5) as resp:
-                t_payload = json.loads(resp.read().decode("utf-8"))
-                trade = t_payload.get("trades", {}).get(sym, {})
-                p = trade.get("p")
-                tt = trade.get("t")
-                if p is not None:
-                    latest_price = float(p)
-                if tt:
-                    tdt = datetime.fromisoformat(tt.replace("Z", "+00:00")).astimezone(ET)
-                    if tdt > latest_time:
-                        latest_time = tdt
+            with urllib.request.urlopen(quote_req, timeout=5) as resp:
+                q_payload = json.loads(resp.read().decode("utf-8"))
+                quote = q_payload.get("quotes", {}).get(sym, {})
+                ap = quote.get("ap")
+                bp = quote.get("bp")
+                qt = quote.get("t")
+                if ap is not None and bp is not None and ap > 0 and bp > 0:
+                    latest_price = (float(ap) + float(bp)) / 2.0
+                elif ap is not None and ap > 0:
+                    latest_price = float(ap)
+                elif bp is not None and bp > 0:
+                    latest_price = float(bp)
+                if qt:
+                    qdt = datetime.fromisoformat(qt.replace("Z", "+00:00")).astimezone(ET)
+                    if qdt > latest_time:
+                        latest_time = qdt
         except Exception:
             latest_price = None
+
+        # Fallback to latest trade if quote isn't available.
+        trade_url = "https://data.alpaca.markets/v2/stocks/trades/latest?" + urllib.parse.urlencode({
+            "symbols": sym,
+            "feed": "iex",
+        })
+        trade_req = urllib.request.Request(
+            trade_url,
+            headers={
+                "APCA-API-KEY-ID": key,
+                "APCA-API-SECRET-KEY": secret,
+                "accept": "application/json",
+            },
+        )
+        if latest_price is None:
+            try:
+                with urllib.request.urlopen(trade_req, timeout=5) as resp:
+                    t_payload = json.loads(resp.read().decode("utf-8"))
+                    trade = t_payload.get("trades", {}).get(sym, {})
+                    p = trade.get("p")
+                    tt = trade.get("t")
+                    if p is not None:
+                        latest_price = float(p)
+                    if tt:
+                        tdt = datetime.fromisoformat(tt.replace("Z", "+00:00")).astimezone(ET)
+                        if tdt > latest_time:
+                            latest_time = tdt
+            except Exception:
+                latest_price = None
 
     return {
         "day": day,
@@ -1793,6 +1807,7 @@ def fetch_intraday_bars(sym: str):
         "latest_price": latest_price,
         "latest_time": latest_time,
         "active_investment": active_investment,
+        "preopen_clear": False,
     }, None
 
 def y_to_row(v: float, ymin: float, ymax: float) -> int:
@@ -1846,6 +1861,63 @@ def render_chart(data):
     bars = data["bars"]
     latest_price = data.get("latest_price")
     active_investment = bool(data.get("active_investment"))
+    preopen_clear = bool(data.get("preopen_clear"))
+
+    if preopen_clear:
+        W = LEFT_PAD + 1 + PLOT_W
+        H = TOP_PAD + PLOT_H + 1 + BOTTOM_PAD
+        canvas = [[" "] * W for _ in range(H)]
+
+        title = f"{symbol} Daily Candlesticks"
+        title_start = max(0, (W - len(title)) // 2)
+        title_row = 1
+        for i, ch in enumerate(title):
+            canvas[title_row][title_start + i] = ch
+
+        hint = "Press Ctrl+C to return"
+        hint_row = 2
+        hint_start = max(0, (W - len(hint)) // 2)
+        hint_positions = set()
+        for i, ch in enumerate(hint):
+            c = hint_start + i
+            if c < W:
+                canvas[hint_row][c] = ch
+                hint_positions.add((hint_row, c))
+
+        msg = "Preparing next market session..."
+        msg2 = "Chart resets 10m before 9:30 AM ET."
+        mid_row = TOP_PAD + (PLOT_H // 2) - 1
+        msg_start = max(0, (W - len(msg)) // 2)
+        msg2_start = max(0, (W - len(msg2)) // 2)
+        msg_positions = set()
+        for i, ch in enumerate(msg):
+            c = msg_start + i
+            if c < W:
+                canvas[mid_row][c] = ch
+                msg_positions.add((mid_row, c))
+        for i, ch in enumerate(msg2):
+            c = msg2_start + i
+            if c < W:
+                canvas[mid_row + 1][c] = ch
+                msg_positions.add((mid_row + 1, c))
+
+        lines = []
+        for r in range(H):
+            row_chars = []
+            for c, ch in enumerate(canvas[r]):
+                if (r, c) in hint_positions or (r, c) in msg_positions:
+                    row_chars.append(f"{MUTED}{ch}{RESET}")
+                else:
+                    row_chars.append(ch)
+            lines.append("".join(row_chars))
+
+        if len(lines) < HEIGHT:
+            lines.extend([" " * WIDTH for _ in range(HEIGHT - len(lines))])
+        else:
+            lines = lines[:HEIGHT]
+
+        sys.stdout.write("\n".join(lines))
+        return
 
     session_bars = [b for b in bars if b[0] <= plot_end]
     if not session_bars:
@@ -2278,7 +2350,8 @@ live_status_box() {
 
   local gap=1
   local group_h=$((main_box_h + gap + footer_box_h))
-  local top=0
+  local top=$(( (rows - group_h) / 2 ))
+  [ "$top" -lt 0 ] && top=0
 
   local header_idx=-1
   for ((i=0; i<${#content[@]}; i++)); do
@@ -2289,7 +2362,7 @@ live_status_box() {
     fi
   done
 
-  printf '\033[H' 2>/dev/null || true
+  printf '\033[H\033[J' 2>/dev/null || true
   for ((i=0; i<top; i++)); do
     printf '%*s\n' "$cols" ""
   done
