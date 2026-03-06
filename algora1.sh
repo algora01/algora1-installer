@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_b05c1321566547cf9e9afa35a2fca5b4.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_93e533da5fa045c58d29de95f6b0fe57.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_9df85ffbd8d143be90925ef5fbfe7bab.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_59a801a38eca43ebb014e73691e37f4b.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_627a777fc0154048b21fc3dc3026b907.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a7e1f312c7554c57874d16aa04606cc3.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e02ec4ceffab40938e9f323f96fd618a.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_86b1f6eb0dd243b39b0eb355574486a0.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -2151,15 +2151,28 @@ center_ansi() {
   printf "%*s%s%*s" "$lp" "" "$txt" "$rp" ""
 }
 
+left_ansi() {
+  local txt="$1"
+  local width="$2"
+  local plain len
+  plain="$(strip_ansi "$txt")"
+  len="${#plain}"
+  if [ "$len" -gt "$width" ]; then
+    txt="${plain:0:$width}"
+    len="$width"
+  fi
+  printf "%s%*s" "$txt" $((width - len)) ""
+}
+
 live_status_box() {
   local engine="$1"
   local body="$2"
 
   local rows=24 cols=80
-  local box_w=72 box_h=16
+  local box_w=76 box_h=22
   local inner_w=$((box_w - 2))
   local left=$(( (cols - box_w) / 2 ))
-  local top=$(( (rows - box_h) / 2 ))
+  local top=1
 
   local hline
   printf -v hline '%*s' $((box_w - 2)) ''
@@ -2184,22 +2197,30 @@ live_status_box() {
     fi
     prev_blank=0
     body_lines+=("$ln")
-    [ "${#body_lines[@]}" -ge 8 ] && break
   done < <(printf "%s\n" "$body" | sed 's/\r//g')
 
   if [ "${#body_lines[@]}" -eq 0 ]; then
     body_lines+=("(no status yet)")
   fi
 
+  local max_content=$((box_h - 2))  # 20 lines
   local -a content=()
-  content+=("${body_lines[@]}")
-  content+=("")
-  content+=("Press Enter or Ctrl+C to return.")
+  for ((i=0; i<max_content; i++)); do content+=(""); done
 
-  local max_content=$((box_h - 2))
-  if [ "${#content[@]}" -gt "$max_content" ]; then
-    content=("${content[@]:0:$max_content}")
-  fi
+  local idx=0
+  local ln plain
+  for ln in "${body_lines[@]}"; do
+    plain="$(strip_ansi "$ln")"
+    # Footer comes from engine file; control panel uses Enter-only return text.
+    if [[ "$plain" == *"Ctrl+C to go back"* ]]; then
+      continue
+    fi
+    [ "$idx" -ge 18 ] && break
+    content[$idx]="$ln"
+    idx=$((idx + 1))
+  done
+  content[18]="Press Enter to return."
+  content[19]=""
 
   printf '\033[H' 2>/dev/null || true
   for ((i=0; i<top; i++)); do
@@ -2208,9 +2229,14 @@ live_status_box() {
 
   printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" "" "$hline"
   for ((i=0; i<max_content; i++)); do
-    local txt="" inside
+    local txt="" inside plain
     [ "$i" -lt "${#content[@]}" ] && txt="${content[$i]}"
-    inside="$(center_ansi "$txt" "$inner_w")"
+    plain="$(strip_ansi "$txt")"
+    if [[ "$plain" == *"Market Open"* ]] || [[ "$plain" == *"Market Closed"* ]] || [[ "$plain" == *"NO ACTIVE POSITIONS"* ]] || [[ "$plain" == "Press Enter to return."* ]]; then
+      inside="$(center_ansi "$txt" "$inner_w")"
+    else
+      inside="$(left_ansi "$txt" "$inner_w")"
+    fi
     printf '%*s\033[38;5;39m│\033[0m%s\033[38;5;39m│\033[0m\n' "$left" "" "$inside"
   done
   printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" "" "$hline"
