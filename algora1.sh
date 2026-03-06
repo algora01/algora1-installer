@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c8141477d6534e3cb01be974048ff6c9.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5a56b10ff072463fb179b0d1f9572c01.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_92af51be24044215839d8fb343055c6f.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6ea021e337534d1987d1324fd4cd5cc8.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_737815c5aecc4cdeb5ba0267a15c0ab6.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c668f111433a41b7a2c27259a5542689.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_97743b6e9e51430092a519df0b05030a.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_2f90a34ae3b84db88135e70b0982aa1c.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -2172,23 +2172,6 @@ live_status_box() {
   [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
   [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
 
-  local box_w=76
-  [ "$box_w" -gt $((cols - 2)) ] && box_w=$((cols - 2))
-  [ "$box_w" -lt 44 ] && box_w=44
-
-  local box_h=22
-  [ "$box_h" -gt $((rows - 2)) ] && box_h=$((rows - 2))
-  [ "$box_h" -lt 12 ] && box_h=12
-
-  local inner_w=$((box_w - 2))
-  local left=$(( (cols - box_w) / 2 ))
-  local top=$(( (rows - box_h) / 2 ))
-  [ "$top" -lt 1 ] && top=1
-
-  local hline
-  printf -v hline '%*s' $((box_w - 2)) ''
-  hline="${hline// /─}"
-
   local -a body_lines=()
   local blank_run=0
   while IFS= read -r ln; do
@@ -2200,54 +2183,115 @@ live_status_box() {
       continue
     fi
     if [[ "$plain" =~ ^[[:space:]]*$ ]]; then
-      if [ "$blank_run" -lt 2 ]; then
+      if [ "$blank_run" -lt 1 ]; then
         body_lines+=("")
       fi
       blank_run=$((blank_run + 1))
       continue
     fi
     blank_run=0
+
+    if [[ "$plain" == *"Ctrl+C to go back"* ]] || [[ "$plain" == "Press Enter to return."* ]]; then
+      body_lines+=("Press Enter to return.")
+      continue
+    fi
     body_lines+=("$ln")
   done < <(printf "%s\n" "$body" | sed 's/\r//g')
+
+  # Trim leading/trailing empty lines from incoming status.
+  while [ "${#body_lines[@]}" -gt 0 ]; do
+    local first_plain
+    first_plain="$(strip_ansi "${body_lines[0]}")"
+    [[ "$first_plain" =~ ^[[:space:]]*$ ]] || break
+    body_lines=("${body_lines[@]:1}")
+  done
+  while [ "${#body_lines[@]}" -gt 0 ]; do
+    local last_idx last_plain
+    last_idx=$(( ${#body_lines[@]} - 1 ))
+    last_plain="$(strip_ansi "${body_lines[$last_idx]}")"
+    [[ "$last_plain" =~ ^[[:space:]]*$ ]] || break
+    body_lines=("${body_lines[@]:0:$last_idx}")
+  done
 
   if [ "${#body_lines[@]}" -eq 0 ]; then
     body_lines+=("(no status yet)")
   fi
 
-  local max_content=$((box_h - 2))
-  local -a content=()
-  local idx=0 saw_footer=0
+  # Ensure Enter footer exists exactly once.
+  local has_footer=0
   local ln plain
   for ln in "${body_lines[@]}"; do
     plain="$(strip_ansi "$ln")"
-    if [[ "$plain" == *"Ctrl+C to go back"* ]] || [[ "$plain" == "Press Enter to return."* ]]; then
-      ln="Press Enter to return."
-      plain="Press Enter to return."
-      saw_footer=1
+    if [[ "$plain" == "Press Enter to return."* ]]; then
+      has_footer=1
+      break
     fi
-    [ "$idx" -ge "$max_content" ] && break
-    content+=("$ln")
-    idx=$((idx + 1))
   done
 
-  if [ "$saw_footer" -eq 0 ] && [ "$idx" -lt "$max_content" ]; then
-    if [ "$idx" -gt 0 ]; then
-      plain="$(strip_ansi "${content[$((idx - 1))]}")"
-      if [[ ! "$plain" =~ ^[[:space:]]*$ ]] && [ "$idx" -lt "$max_content" ]; then
-        content+=("")
-        idx=$((idx + 1))
-      fi
-    fi
-    if [ "$idx" -lt "$max_content" ]; then
-      content+=("Press Enter to return.")
-      idx=$((idx + 1))
-    fi
+  if [ "$has_footer" -eq 0 ]; then
+    body_lines+=("")
+    body_lines+=("Press Enter to return.")
   fi
 
-  for ((i=idx; i<max_content; i++)); do content+=(""); done
+  # Build compact content with exactly one blank line at top/bottom inside border.
+  local -a content=()
+  content+=("")
+  for ln in "${body_lines[@]}"; do
+    content+=("$ln")
+  done
+  content+=("")
+
+  local -a compact=()
+  blank_run=0
+  for ln in "${content[@]}"; do
+    plain="$(strip_ansi "$ln")"
+    if [[ "$plain" =~ ^[[:space:]]*$ ]]; then
+      if [ "$blank_run" -lt 1 ]; then
+        compact+=("")
+      fi
+      blank_run=$((blank_run + 1))
+    else
+      blank_run=0
+      compact+=("$ln")
+    fi
+  done
+  content=("${compact[@]}")
+
+  # Fit box height tightly to content while leaving at least one terminal row margin.
+  local max_content=$((rows - 4))
+  [ "$max_content" -lt 6 ] && max_content=6
+  if [ "${#content[@]}" -gt "$max_content" ]; then
+    local keep_head=$((max_content - 2))
+    [ "$keep_head" -lt 3 ] && keep_head=3
+    content=("${content[@]:0:$keep_head}" "" "Press Enter to return.")
+  fi
+
+  # Width follows longest visible line so border matches text better.
+  local longest=0
+  for ln in "${content[@]}"; do
+    plain="$(strip_ansi "$ln")"
+    [ "${#plain}" -gt "$longest" ] && longest="${#plain}"
+  done
+
+  local inner_w=$((longest + 4))
+  [ "$inner_w" -lt 48 ] && inner_w=48
+  local max_inner_w=$((cols - 6))
+  [ "$inner_w" -gt "$max_inner_w" ] && inner_w="$max_inner_w"
+  [ "$inner_w" -lt 20 ] && inner_w=20
+
+  local box_w=$((inner_w + 2))
+  local box_h=$(( ${#content[@]} + 2 ))
+  local left=$(( (cols - box_w) / 2 ))
+  [ "$left" -lt 0 ] && left=0
+  local top=$(( (rows - box_h) / 2 ))
+  [ "$top" -lt 1 ] && top=1
+
+  local hline
+  printf -v hline '%*s' "$inner_w" ''
+  hline="${hline// /─}"
 
   local header_idx=-1
-  for ((i=0; i<max_content; i++)); do
+  for ((i=0; i<${#content[@]}; i++)); do
     plain="$(strip_ansi "${content[$i]}")"
     if [[ ! "$plain" =~ ^[[:space:]]*$ ]]; then
       header_idx="$i"
@@ -2261,7 +2305,7 @@ live_status_box() {
   done
 
   printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" "" "$hline"
-  for ((i=0; i<max_content; i++)); do
+  for ((i=0; i<${#content[@]}; i++)); do
     local txt="" inside plain
     txt="${content[$i]}"
     plain="$(strip_ansi "$txt")"
@@ -2275,6 +2319,10 @@ live_status_box() {
     printf '%*s\033[38;5;39m│\033[0m%s\033[38;5;39m│\033[0m\n' "$left" "" "$inside"
   done
   printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" "" "$hline"
+
+  for ((i=0; i<rows-top-box_h; i++)); do
+    printf '%*s\n' "$cols" ""
+  done
 }
 
 secs_until_midnight_et() {
@@ -2638,7 +2686,8 @@ live_status_menu() {
 
     local key=""
     if IFS= read -r -s -n 1 -t 1 key < /dev/tty; then
-      if [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
+      # In non-canonical mode, Enter can arrive as empty, CR, or LF.
+      if [ -z "$key" ] || [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
         trap - INT TERM HUP
         ui_view_mode_off
         hard_clear
@@ -2711,7 +2760,8 @@ live_charts_menu() {
     # Ignore all keys except Enter; Ctrl+C is handled by trap.
     local key=""
     if IFS= read -r -s -n 1 -t 0.6 key < /dev/tty; then
-      if [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
+      # In non-canonical mode, Enter can arrive as empty, CR, or LF.
+      if [ -z "$key" ] || [ "$key" = $'\n' ] || [ "$key" = $'\r' ]; then
         trap - INT TERM HUP
         ui_view_mode_off
         hard_clear
