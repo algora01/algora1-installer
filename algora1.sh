@@ -16,9 +16,6 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
-# Set your custom artifact URLs here:
-# - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.exe")
-# - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
 CSTM_ZIP_URL="${CSTM_ZIP_URL:-}"
 ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ca112bb6a1942d0992b0a8b7ad96c8e.zip"
 
