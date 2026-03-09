@@ -4,8 +4,6 @@ set -euo pipefail
 export CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=1
 export CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=1
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 INSTANCE_NAME="algora1"
 KEY_NAME="ssh_key1"
 
@@ -16,40 +14,21 @@ MACHINE_TYPE_DEFAULT="e2-custom-1-3072"
 IMAGE_FAMILY="ubuntu-2404-lts-amd64"
 IMAGE_PROJECT="ubuntu-os-cloud"
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
-BUILDER_BUNDLE_URL_DEFAULT=""
-BUILDER_PMNY_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_9e941a66098449c2bc36e1f524480b14.zip"
-BUILDER_ENGINE_BUILDER_CORE_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_70cb81616dc74e65b1a75b782b5a03a9.zip"
-BUILDER_ENGINE_BUILDER_CLI_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_af93dec6038842af8ca25ca1c6ad7b4d.zip"
-BUILDER_ENGINE_BACKTEST_APP_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_56991b312b2f4700a9ff2325b3af09f2.zip"
+# Set your custom artifact URLs here:
+# - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.exe")
+# - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
+CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_340b58123ebf4041880d044b63e07237.zip"
+ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5409a144c7d54ea48bb905c592bfd018.zip"
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_38139453eb8147d2aada99e4ba4a3df6.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a1e6c53cfc64a9eae0a48416fb4802e.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d155ac78d124d3ab470ad349efb3ce1.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d3a5845dce34f1caf3f17040fa13eec.zip" ;;
-    *) echo "" ;;
-  esac
-}
-
-zip_url_for_builder_bundle() {
-  local from_env="${ALGORA1_BUILDER_BUNDLE_URL:-}"
-  if [ -n "${from_env}" ]; then
-    echo "${from_env}"
-  else
-    echo "${BUILDER_BUNDLE_URL_DEFAULT}"
-  fi
-}
-
-zip_url_for_builder_asset() {
-  local unit="$1"
-  case "$unit" in
-    PMNY) echo "${ALGORA1_PMNY_ZIP_URL:-${BUILDER_PMNY_ZIP_URL_DEFAULT}}" ;;
-    engine_builder_core) echo "${ALGORA1_ENGINE_BUILDER_CORE_ZIP_URL:-${BUILDER_ENGINE_BUILDER_CORE_ZIP_URL_DEFAULT}}" ;;
-    engine_builder_cli) echo "${ALGORA1_ENGINE_BUILDER_CLI_ZIP_URL:-${BUILDER_ENGINE_BUILDER_CLI_ZIP_URL_DEFAULT}}" ;;
-    engine_backtest_app) echo "${ALGORA1_ENGINE_BACKTEST_APP_ZIP_URL:-${BUILDER_ENGINE_BACKTEST_APP_ZIP_URL_DEFAULT}}" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_534e48b6946144c192de500e210d1dfa.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_abe762175c2846b8a7fc4a0710aca324.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5b6d79723f214f36b499bfc31749cd36.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_340b58123ebf4041880d044b63e07237.zip" ;;
+    CSTM) echo "${CSTM_ZIP_URL}" ;;
     *) echo "" ;;
   esac
 }
@@ -73,6 +52,8 @@ TSLA — Tesla engine with signal-based deployment and downside controls.
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
+
+CSTM — Custom dynamic engine built from selected industries/objective.
 
 EOT
 }
@@ -785,164 +766,32 @@ copy_engines_from_wix_to_vm() {
     ui_ok "${name} uploaded"
   done
 
+  # engine_builder_core.py is uploaded from its own ZIP URL.
+  local builder_dst="${remote_home}/engine_builder_core.py"
+  if ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+    "${REMOTE_USER}@${ip}" "test -f '${builder_dst}'" >/dev/null 2>&1; then
+    ui_ok "engine_builder_core.py already present; skipping"
+  else
+    [ -n "${ENGINE_BUILDER_CORE_ZIP_URL}" ] || ui_die "No URL set for engine_builder_core.py (set ENGINE_BUILDER_CORE_ZIP_URL near the top of algora1.sh)"
+
+    local builder_workdir
+    builder_workdir="$(mktemp -d 2>/dev/null || mktemp -d -t algora1_zipwork)"
+
+    local builder_src
+    builder_src="$(download_and_extract_single_exe "engine_builder_core.py" "${ENGINE_BUILDER_CORE_ZIP_URL}" "${builder_workdir}")"
+
+    ui_spin "Uploading engine_builder_core.py…" scp -q -i "${key_path}" -o StrictHostKeyChecking=accept-new \
+      "${builder_src}" "${REMOTE_USER}@${ip}:${builder_dst}" \
+      || ui_die "Failed to upload engine_builder_core.py to VM"
+
+    ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new \
+      "${REMOTE_USER}@${ip}" "chmod 644 '${builder_dst}'" >/dev/null 2>&1 || true
+
+    rm -rf "${builder_workdir}" >/dev/null 2>&1 || true
+    ui_ok "engine_builder_core.py uploaded"
+  fi
+
   ui_ok "Engine transfer complete"
-}
-
-copy_dynamic_builder_assets_to_vm() {
-  local ip="$1"
-  local key_path="${HOME}/.ssh/${KEY_NAME}"
-  local remote_home="/home/${REMOTE_USER}"
-
-  ui_step "[10.5/12] Uploading dynamic engine builder assets"
-
-  local required_assets=( "PMNY" "engine_builder_cli" )
-  local optional_assets=( "engine_builder_core" "engine_backtest_app" )
-  local uploaded_any=0
-
-  local bundle_url
-  bundle_url="$(zip_url_for_builder_bundle)"
-  local has_asset_urls=1
-  local unit_check
-  for unit_check in "${required_assets[@]}"; do
-    if [ -z "$(zip_url_for_builder_asset "${unit_check}")" ]; then
-      has_asset_urls=0
-      break
-    fi
-  done
-
-  resolve_local_asset() {
-    local unit="$1"
-    local c
-    for c in \
-      "${SCRIPT_DIR}/${unit}" \
-      "${SCRIPT_DIR}/${unit}.py" \
-      "${SCRIPT_DIR}/${unit}.exe" \
-      "${HOME}/Documents/Playground/${unit}" \
-      "${HOME}/Documents/Playground/${unit}.py" \
-      "${HOME}/Documents/Playground/${unit}.exe" \
-      "${PWD}/${unit}" \
-      "${PWD}/${unit}.py" \
-      "${PWD}/${unit}.exe"
-    do
-      if [ -f "${c}" ]; then
-        printf "%s\n" "${c}"
-        return 0
-      fi
-    done
-    return 1
-  }
-
-  resolve_bundle_asset() {
-    local extract_dir="$1"
-    local unit="$2"
-    find "${extract_dir}" -type f \( -name "${unit}" -o -name "${unit}.py" -o -name "${unit}.exe" \) | head -n 1
-  }
-
-  upload_asset_to_vm() {
-    local src="$1"
-    local unit="$2"
-    local base target
-    base="$(basename "${src}")"
-    target="${base}"
-    if [ "${base}" = "${unit}.exe" ]; then
-      target="${unit}"
-    fi
-
-    ui_spin "Uploading ${target}…" scp -q -i "${key_path}" -o StrictHostKeyChecking=accept-new \
-      "${src}" "${REMOTE_USER}@${ip}:${remote_home}/${target}" \
-      || ui_die "Failed to upload ${target} to VM"
-    uploaded_any=1
-  }
-
-  if [ -n "${bundle_url}" ]; then
-    ensure_local_tools_for_zip
-    local workdir
-    workdir="$(mktemp -d 2>/dev/null || mktemp -d -t algora1_bundlework)"
-    local zip_path="${workdir}/builder_bundle.zip"
-    local extract_dir="${workdir}/extract"
-
-    download_file_with_progress "Downloading builder bundle.zip" "${bundle_url}" "${zip_path}"
-    mkdir -p "${extract_dir}"
-    unzip -q "${zip_path}" -d "${extract_dir}" || ui_die "Failed to unzip builder bundle"
-
-    local name src
-    for name in "${required_assets[@]}"; do
-      src="$(resolve_bundle_asset "${extract_dir}" "${name}")"
-      if [ -z "${src}" ] || [ ! -f "${src}" ]; then
-        ui_die "Builder bundle is missing required file: ${name}"
-      fi
-
-      upload_asset_to_vm "${src}" "${name}"
-    done
-
-    for name in "${optional_assets[@]}"; do
-      src="$(resolve_bundle_asset "${extract_dir}" "${name}")"
-      if [ -n "${src}" ] && [ -f "${src}" ]; then
-        upload_asset_to_vm "${src}" "${name}"
-      fi
-    done
-
-    rm -rf "${workdir}" >/dev/null 2>&1 || true
-  elif [ "${has_asset_urls}" = "1" ]; then
-    ensure_local_tools_for_zip
-    local workdir
-    workdir="$(mktemp -d 2>/dev/null || mktemp -d -t algora1_builderzip)"
-
-    local name src url
-    for name in "${required_assets[@]}"; do
-      url="$(zip_url_for_builder_asset "${name}")"
-      [ -n "${url}" ] || ui_die "Missing ZIP URL for builder asset: ${name}"
-
-      src="$(download_and_extract_single_exe "${name}" "${url}" "${workdir}")"
-      [ -f "${src}" ] || ui_die "Extracted builder asset not found: ${name}"
-      upload_asset_to_vm "${src}" "${name}"
-    done
-
-    for name in "${optional_assets[@]}"; do
-      url="$(zip_url_for_builder_asset "${name}")"
-      [ -n "${url}" ] || continue
-      src="$(download_and_extract_single_exe "${name}" "${url}" "${workdir}")"
-      [ -f "${src}" ] || continue
-      upload_asset_to_vm "${src}" "${name}"
-    done
-
-    rm -rf "${workdir}" >/dev/null 2>&1 || true
-  else
-    for name in "${required_assets[@]}"; do
-      local src=""
-      src="$(resolve_local_asset "${name}" || true)"
-
-      if [ ! -f "${src}" ]; then
-        ui_warn "Local asset missing (skipping): ${name}"
-        continue
-      fi
-
-      upload_asset_to_vm "${src}" "${name}"
-    done
-
-    for name in "${optional_assets[@]}"; do
-      local src=""
-      src="$(resolve_local_asset "${name}" || true)"
-
-      if [ -f "${src}" ]; then
-        upload_asset_to_vm "${src}" "${name}"
-      fi
-    done
-  fi
-
-  if [ "${uploaded_any}" = "1" ]; then
-    ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new "${REMOTE_USER}@${ip}" \
-      "chmod +x \
-        '${remote_home}/PMNY' '${remote_home}/PMNY.py' \
-        '${remote_home}/engine_builder_core' '${remote_home}/engine_builder_core.py' \
-        '${remote_home}/engine_builder_cli' '${remote_home}/engine_builder_cli.py' \
-        '${remote_home}/engine_backtest_app' '${remote_home}/engine_backtest_app.py' \
-        2>/dev/null || true" \
-      >/dev/null 2>&1 || true
-    ui_ok "Dynamic builder assets uploaded"
-  else
-    ui_warn "No dynamic builder assets were uploaded. Set ALGORA1_BUILDER_BUNDLE_URL or keep local files."
-  fi
 }
 
 CFG_DIR="${HOME}/.config/algora1_setup"
@@ -1469,11 +1318,11 @@ ensure_credentials_tui() {
     return
   fi
 
-  ui_info "Enter Alpaca LIVE credentials (used by BEXP/TSLA/NVDA)."
+  ui_info "Enter Alpaca LIVE credentials (used by BEXP/TSLA/NVDA, optional for CSTM live mode)."
   ALPACA_LIVE_API_KEY="$(ui_input "ALPACA_LIVE_API_KEY:")"
   ALPACA_LIVE_SECRET_KEY="$(ui_secret "ALPACA_LIVE_SECRET_KEY:")"
 
-  ui_info "Enter Alpaca PAPER credentials (used by PMNY)."
+  ui_info "Enter Alpaca PAPER credentials (used by PMNY and CSTM paper mode)."
   ALPACA_PAPER_API_KEY="$(ui_input "ALPACA_PAPER_API_KEY:")"
   ALPACA_PAPER_SECRET_KEY="$(ui_secret "ALPACA_PAPER_SECRET_KEY:")"
 
@@ -1551,6 +1400,7 @@ printf "Run: \033[38;5;39malgora1\033[0m\n\n"
 
 printf "\033[1mMain Menu\033[0m\n"
 printf "  • Running session\n"
+printf "  • Create Engine\n"
 printf "  • Live Status\n"
 printf "  • Live Charts\n"
 printf "  • Exit\n\n"
@@ -1598,25 +1448,6 @@ install_gum_if_needed() {
 
 install_gum_if_needed || true
 
-install_engine_builder_python_deps() {
-  command -v python3 >/dev/null 2>&1 || return 0
-
-  if python3 - <<'PY' >/dev/null 2>&1
-import importlib.util
-mods = ["pandas", "numpy", "yfinance", "streamlit", "plotly", "openai"]
-missing = [m for m in mods if importlib.util.find_spec(m) is None]
-raise SystemExit(0 if not missing else 1)
-PY
-  then
-    return 0
-  fi
-
-  python3 -m pip --version >/dev/null 2>&1 || return 0
-  python3 -m pip install --user --upgrade pandas numpy yfinance streamlit plotly openai >/dev/null 2>&1 || true
-}
-
-install_engine_builder_python_deps || true
-
 sudo tee /usr/local/bin/algora1-session >/dev/null <<'SESSION'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1625,7 +1456,7 @@ case "${TERM:-}" in
   screen|screen-bce) export TERM="screen-256color" ;;
 esac
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
@@ -1638,6 +1469,8 @@ TSLA — Tesla engine with signal-based deployment and downside controls.
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
+
+CSTM — Custom dynamic engine built from selected industries/objective.
 
 EOT
 }
@@ -1687,15 +1520,12 @@ info() { printf "INFO %s\n" "$*"; }
 warn() { printf "WARN %s\n" "$*" >&2; }
 
 engine_running_anywhere() {
+  # Detect real engine executables only (argv[0] basename), not symbol args.
   ps -eo args= 2>/dev/null | awk '
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA") {
-        found=1
-        exit 0
-      }
-      if ($0 ~ /--engine-launcher/) {
+      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA" || cmd=="CSTM") {
         found=1
         exit 0
       }
@@ -1704,143 +1534,57 @@ engine_running_anywhere() {
   '
 }
 
-dynamic_engine_names() {
-  local dir="$HOME/.algora1/engines"
-  [ -d "$dir" ] || return 0
-  find "$dir" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-    | sed -E 's#^.*/##; s#\.json$##' \
-    | sort -u
-}
-
-collect_engine_choices() {
-  local -a names=()
-  local seen=""
-  local n
-  for n in "${ENGINE_NAMES[@]}"; do
-    names+=("$n")
-    seen="${seen}|${n}|"
-  done
-  while read -r n; do
-    [ -n "$n" ] || continue
-    if [[ "$seen" != *"|${n}|"* ]]; then
-      names+=("$n")
-      seen="${seen}|${n}|"
-    fi
-  done < <(dynamic_engine_names)
-  printf "%s\n" "${names[@]}"
-}
-
-run_engine_binary_or_launcher() {
-  local engine="$1"
-  local local_exec="./${engine}"
-  local home_exec="$HOME/${engine}"
-
-  if [ -f "$local_exec" ]; then
-    chmod +x "$local_exec" >/dev/null 2>&1 || true
-    "$local_exec"
-    return 0
-  fi
-
-  if [ -f "$home_exec" ]; then
-    chmod +x "$home_exec" >/dev/null 2>&1 || true
-    "$home_exec"
-    return 0
-  fi
-
-  warn "Engine launcher not found: ${engine}"
-  return 1
-}
-
-run_engine_builder_cli() {
-  if [ -x "$HOME/engine_builder_cli" ]; then
-    "$HOME/engine_builder_cli" "$@"
-    return $?
-  fi
-  if [ -f "$HOME/engine_builder_cli.py" ]; then
-    python3 "$HOME/engine_builder_cli.py" "$@"
-    return $?
-  fi
-  warn "engine_builder_cli not found at $HOME/engine_builder_cli or $HOME/engine_builder_cli.py"
-  return 1
-}
-
 run_engine_prompt_if_safe() {
   if engine_running_anywhere; then
     warn "An engine appears to be running already. Skipping engine prompt."
     return 0
   fi
 
-  local action
-  action="$(choose "Run investment engine?" "Run preset/custom engine" "View custom engine" "Build custom engine" "Back")"
+  local engine="${ALGORA1_AUTORUN_ENGINE:-}"
+  if [ -n "${engine}" ]; then
+    unset ALGORA1_AUTORUN_ENGINE
+  else
+    local action
+    action="$(choose "Run investment engine?" "Run investment engine" "Back")"
 
-  if [ "$action" = "Back" ]; then
-    return 1
-  fi
-
-  if [ "$action" = "Build custom engine" ]; then
-    [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
-    [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
-    run_engine_builder_cli || true
-    return 0
-  fi
-
-  if [ "$action" = "View custom engine" ]; then
-    [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
-    [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
-
-    local -a custom_choices=()
-    while read -r e; do
-      [ -n "$e" ] || continue
-      custom_choices+=("$e")
-    done < <(dynamic_engine_names)
-
-    if [ "${#custom_choices[@]}" -eq 0 ]; then
-      warn "No custom engines found in $HOME/.algora1/engines"
-      return 0
+    # IMPORTANT: Back should exit the screen session so you return to the Home menu
+    if [ "$action" != "Run investment engine" ]; then
+      return 1
     fi
 
-    local view_engine
-    view_engine="$(choose "View custom engine" "${custom_choices[@]}")"
-    [ -n "$view_engine" ] || return 0
-    run_engine_builder_cli --view-engine "$view_engine" || true
-    return 0
+    engine="$(choose "Select engine" "${ENGINE_NAMES[@]}")"
+    [ -n "$engine" ] || return 1
   fi
 
-  local -a engine_choices=()
-  while read -r e; do
-    [ -n "$e" ] || continue
-    engine_choices+=("$e")
-  done < <(collect_engine_choices)
-  [ "${#engine_choices[@]}" -gt 0 ] || { warn "No engines available."; return 0; }
-
-  local engine
-  engine="$(choose "Select engine" "${engine_choices[@]}")"
-  [ -n "$engine" ] || return 1
+  local valid=0
+  local candidate
+  for candidate in "${ENGINE_NAMES[@]}"; do
+    if [ "$candidate" = "$engine" ]; then
+      valid=1
+      break
+    fi
+  done
+  [ "$valid" -eq 1 ] || return 1
 
   printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+
+  chmod +x "./${engine}" "/usr/local/bin/${engine}" >/dev/null 2>&1 || true
 
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
 
   missing=()
-  local paper_ok=1
-  local live_ok=1
-  [ -n "${ALPACA_PAPER_API_KEY:-}" ] && [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || paper_ok=0
-  [ -n "${ALPACA_LIVE_API_KEY:-}" ] && [ -n "${ALPACA_LIVE_SECRET_KEY:-}" ] || live_ok=0
-  if [ "$paper_ok" = "0" ] && [ "$live_ok" = "0" ]; then
-    missing+=("ALPACA_PAPER_API_KEY")
-    missing+=("ALPACA_PAPER_SECRET_KEY")
-    missing+=("ALPACA_LIVE_API_KEY")
-    missing+=("ALPACA_LIVE_SECRET_KEY")
-  fi
+  [ -n "${ALPACA_PAPER_API_KEY:-}" ] || missing+=("ALPACA_PAPER_API_KEY")
+  [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || missing+=("ALPACA_PAPER_SECRET_KEY")
   if [ "${#missing[@]}" -gt 0 ]; then
-    warn "No complete Alpaca keypair found in this session."
-    warn "Missing keys: ${missing[*]}"
+    warn "Missing keys in this session: ${missing[*]}"
     warn "Fix: ensure keys exist in ~/.profile or ~/.bashrc for user $(whoami)"
     return 0
   fi
 
-  run_engine_binary_or_launcher "$engine" || true
+  local engine_path="./${engine}"
+  [ -x "${engine_path}" ] || engine_path="/usr/local/bin/${engine}"
+  "${engine_path}"
   return 0
 }
 
@@ -1875,10 +1619,10 @@ sudo tee /usr/local/bin/algora1-live-chart >/dev/null <<'CHART'
 set -euo pipefail
 
 SYMBOL="${1:-TSLA}"
-case "$SYMBOL" in
-  TSLA|NVDA) ;;
-  *) SYMBOL="TSLA" ;;
-esac
+SYMBOL="$(printf "%s" "$SYMBOL" | tr '[:lower:]' '[:upper:]' | tr '.' '-')"
+if ! printf "%s" "$SYMBOL" | grep -Eq '^[A-Z0-9-]+$'; then
+  SYMBOL="TSLA"
+fi
 
 python3 - "$SYMBOL" <<'PY'
 import json
@@ -2394,7 +2138,7 @@ case "${TERM:-}" in
   screen|screen-bce) export TERM="screen-256color" ;;
 esac
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
@@ -2818,6 +2562,411 @@ ok()   { printf "✓ %s\n" "$*"; }
 info() { printf "INFO %s\n" "$*"; }
 warn() { printf "WARN %s\n" "$*" >&2; }
 
+set_persistent_export() {
+  local key="$1"
+  local value="$2"
+  local file escaped
+  escaped="$(printf "%q" "$value")"
+
+  for file in "$HOME/.profile" "$HOME/.bashrc"; do
+    [ -f "$file" ] || touch "$file"
+    if grep -Eq "^[[:space:]]*export[[:space:]]+${key}=" "$file"; then
+      sed -i "s|^[[:space:]]*export[[:space:]]\\+${key}=.*$|export ${key}=${escaped}|g" "$file"
+    else
+      printf "\nexport %s=%s\n" "$key" "$escaped" >> "$file"
+    fi
+  done
+
+  export "${key}=${value}"
+}
+
+cstm_tickers_for_industry() {
+  case "$1" in
+    "Information Technology")
+      echo "AAPL, ACN, ADBE, AMD, AVGO, CSCO, IBM, INTC, INTU, MSFT, NVDA, ORCL, PLTR, QCOM, CRM, NOW, TXN"
+      ;;
+    "Health Care")
+      echo "ABBV, ABT, AMGN, BMY, CVS, DHR, LLY, GILD, ISRG, JNJ, MDT, MRK, PFE, TMO, UNH"
+      ;;
+    "Financials")
+      echo "AXP, AIG, BAC, BLK, BK, BRK-B, COF, C, SCHW, GS, JPM, MET, MS, USB, WFC"
+      ;;
+    "Consumer Discretionary")
+      echo "AMZN, BKNG, GM, HD, LOW, MCD, NKE, SBUX, TGT, TSLA"
+      ;;
+    "Industrials")
+      echo "BA, CAT, DE, EMR, FDX, GD, GE, HON, LMT, RTX, UNP, UPS"
+      ;;
+    "Consumer Staples")
+      echo "MO, KO, CL, COST, MDLZ, PEP, PM, PG, WMT"
+      ;;
+    "Energy")
+      echo "CVX, COP, XOM"
+      ;;
+    "Materials")
+      echo "LIN, MMM"
+      ;;
+    "Utilities")
+      echo "DUK, NEE, SO"
+      ;;
+    "Real Estate")
+      echo "AMT, SPG"
+      ;;
+    "No preference"|*)
+      echo "AAPL, ACN, ADBE, AMD, AVGO, CSCO, IBM, INTC, INTU, MSFT, NVDA, ORCL, PLTR, QCOM, CRM, NOW, TXN, ABBV, ABT, AMGN, BMY, CVS, DHR, LLY, GILD, ISRG, JNJ, MDT, MRK, PFE, TMO, UNH, AXP, AIG, BAC, BLK, BK, BRK-B, COF, C, SCHW, GS, JPM, MET, MS, USB, WFC, AMZN, BKNG, GM, HD, LOW, MCD, NKE, SBUX, TGT, TSLA, GOOGL, GOOG, T, CMCSA, META, NFLX, TMUS, VZ, DIS, BA, CAT, DE, EMR, FDX, GD, GE, HON, LMT, RTX, UNP, UPS, MO, KO, CL, COST, MDLZ, PEP, PM, PG, WMT, CVX, COP, XOM, LIN, MMM, DUK, NEE, SO, AMT, SPG"
+      ;;
+  esac
+}
+
+cstm_wrap_text() {
+  python3 - "$1" <<'PY'
+import sys
+from textwrap import fill
+text = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not text:
+    print("")
+else:
+    print(fill(text, width=64))
+PY
+}
+
+ensure_cstm_builder_ready() {
+  if [ ! -f "$HOME/engine_builder_core.py" ]; then
+    warn "Missing ~/engine_builder_core.py on VM. Re-run setup to upload custom engine assets."
+    return 1
+  fi
+
+  if python3 - <<'PY' >/dev/null 2>&1; then
+import importlib
+for m in ("numpy", "pandas", "yfinance"):
+    importlib.import_module(m)
+PY
+    return 0
+  fi
+
+  info "Installing optimizer dependencies (numpy/pandas/yfinance)…"
+  if ! python3 -m pip install --user --quiet numpy pandas yfinance >/dev/null 2>&1; then
+    warn "Dependency install failed. Please check internet access and Python pip setup on VM."
+    return 1
+  fi
+
+  python3 - <<'PY' >/dev/null 2>&1 || {
+import importlib
+for m in ("numpy", "pandas", "yfinance"):
+    importlib.import_module(m)
+PY
+    warn "Dependencies still unavailable after install."
+    return 1
+  }
+
+  return 0
+}
+
+run_cstm_optimizer_json() {
+  local industry="$1"
+  local objective="$2"
+
+  python3 - "$industry" "$objective" <<'PY'
+import json
+import os
+import sys
+
+industry = sys.argv[1]
+objective = sys.argv[2]
+sys.path.insert(0, os.path.expanduser("~"))
+
+try:
+    import engine_builder_core as core
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"Could not import engine_builder_core: {exc}"}))
+    raise SystemExit(0)
+
+sector_universe = {
+    "Information Technology": ["AAPL", "ACN", "ADBE", "AMD", "AVGO", "CSCO", "IBM", "INTC", "INTU", "MSFT", "NVDA", "ORCL", "PLTR", "QCOM", "CRM", "NOW", "TXN"],
+    "Health Care": ["ABBV", "ABT", "AMGN", "BMY", "CVS", "DHR", "LLY", "GILD", "ISRG", "JNJ", "MDT", "MRK", "PFE", "TMO", "UNH"],
+    "Financials": ["AXP", "AIG", "BAC", "BLK", "BK", "BRK-B", "COF", "C", "SCHW", "GS", "JPM", "MET", "MS", "USB", "WFC"],
+    "Consumer Discretionary": ["AMZN", "BKNG", "GM", "HD", "LOW", "MCD", "NKE", "SBUX", "TGT", "TSLA"],
+    "Communication Services": ["GOOGL", "GOOG", "T", "CMCSA", "META", "NFLX", "TMUS", "VZ", "DIS"],
+    "Industrials": ["BA", "CAT", "DE", "EMR", "FDX", "GD", "GE", "HON", "LMT", "RTX", "UNP", "UPS"],
+    "Consumer Staples": ["MO", "KO", "CL", "COST", "MDLZ", "PEP", "PM", "PG", "WMT"],
+    "Energy": ["CVX", "COP", "XOM"],
+    "Materials": ["LIN", "MMM"],
+    "Utilities": ["DUK", "NEE", "SO"],
+    "Real Estate": ["AMT", "SPG"],
+}
+
+core.SECTOR_UNIVERSE = sector_universe
+core.ALL_SECTORS = list(sector_universe.keys())
+core.NO_PREFERENCE = "No preference"
+
+industries = [core.NO_PREFERENCE] if industry == core.NO_PREFERENCE else [industry]
+strategy = core.StrategySpec(
+    entry_rule="close > sma50 and sma10 > sma20 and not (close < sma20 or open < sma20)",
+    exit_rule="close < sma20 or sma10 < sma20",
+    stop_loss_pct=-6.0,
+)
+
+try:
+    sectors, tickers = core.selected_universe(industries)
+    candidates = core.optimize_top_candidates(
+        industries=industries,
+        objective=objective,
+        strategy=strategy,
+        years=10,
+        max_tickers=6,
+        prefilter_count=14,
+        top_n=3,
+    )
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"Optimization failed: {exc}"}))
+    raise SystemExit(0)
+
+if not candidates:
+    print(json.dumps({"ok": False, "error": "No valid candidates found for this industry/objective.", "tickers": tickers}))
+    raise SystemExit(0)
+
+out = []
+for c in candidates:
+    out.append({
+        "rank": c.rank,
+        "tickers": c.tickers,
+        "weights": c.weights,
+        "metrics": c.metrics.as_display(),
+        "objective": c.objective,
+    })
+
+print(json.dumps({
+    "ok": True,
+    "industry": industry,
+    "sectors": sectors,
+    "tickers": tickers,
+    "objective": objective,
+    "candidates": out,
+}))
+PY
+}
+
+build_cstm_candidate_labels() {
+  local payload="$1"
+  local objective="$2"
+  printf '%s' "$payload" | python3 - "$objective" <<'PY'
+import json
+import sys
+
+objective = sys.argv[1]
+data = json.load(sys.stdin)
+
+if objective == "STABILITY":
+    keys = ("Max Drawdown", "Annualized Volatility")
+elif objective == "EFFICIENCY":
+    keys = ("Sharpe (rf=0)", "Sortino (rf=0)")
+else:
+    keys = ("CAGR", "Total Return")
+
+for cand in data.get("candidates", []):
+    metrics = cand.get("metrics", {})
+    metric_line = " | ".join(f"{k}: {metrics.get(k, 'n/a')}" for k in keys)
+    tickers = ",".join(cand.get("tickers", []))
+    print(f"{cand.get('rank', '?')}) {tickers} | {metric_line}")
+PY
+}
+
+cstm_candidate_by_rank() {
+  local payload="$1"
+  local rank="$2"
+  printf '%s' "$payload" | python3 - "$rank" <<'PY'
+import json
+import sys
+
+rank = str(sys.argv[1]).strip()
+data = json.load(sys.stdin)
+for cand in data.get("candidates", []):
+    if str(cand.get("rank")) == rank:
+        print(json.dumps(cand))
+        break
+PY
+}
+
+cstm_run_now_if_possible() {
+  local cnt
+  cnt="$(session_count)"
+  if [ "$cnt" != "0" ]; then
+    warn "A session already exists. Connect to it and select CSTM from the engine list."
+    return 0
+  fi
+
+  local name="investing"
+  create_new_session "$name" "CSTM"
+
+  hard_clear
+  ui_view_mode_on
+  screen -r "$name" || true
+  ui_view_mode_off
+  hard_clear
+  return 0
+}
+
+create_engine_menu() {
+  command -v python3 >/dev/null 2>&1 || { warn "python3 is required for Create Engine."; return 0; }
+
+  local industry
+  industry="$(choose "Create Engine — Industry" \
+    "Information Technology" \
+    "Health Care" \
+    "Financials" \
+    "Consumer Discretionary" \
+    "Industrials" \
+    "Consumer Staples" \
+    "Energy" \
+    "Materials" \
+    "Utilities" \
+    "Real Estate" \
+    "No preference" \
+    "Back")"
+  [ "$industry" != "Back" ] || return 0
+
+  local portfolio_choice objective
+  portfolio_choice="$(choose "Create Engine — Portfolio type" \
+    "1. Highest return (GROWTH) — Focus on CAGR and Total Return." \
+    "2. Lowest risk / smoother ride (STABILITY) — Focus on Max Drawdown and Annualized Volatility." \
+    "3. Best risk-adjusted return (EFFICIENCY) — Focus on Sharpe, Sortino, and Calmar." \
+    "Back")"
+  case "$portfolio_choice" in
+    "1. Highest return (GROWTH) — Focus on CAGR and Total Return.") objective="GROWTH" ;;
+    "2. Lowest risk / smoother ride (STABILITY) — Focus on Max Drawdown and Annualized Volatility.") objective="STABILITY" ;;
+    "3. Best risk-adjusted return (EFFICIENCY) — Focus on Sharpe, Sortino, and Calmar.") objective="EFFICIENCY" ;;
+    *) return 0 ;;
+  esac
+
+  local relevant raw_tickers
+  raw_tickers="$(cstm_tickers_for_industry "$industry")"
+  relevant="$(cstm_wrap_text "$raw_tickers")"
+
+  hard_clear
+  if has_gum; then
+    gum style --border rounded --padding "1 2" --border-foreground 39 \
+      "$(printf "Create Engine\nIndustry: %s\nPortfolio: %s\n\nRelevant tickers:\n%s" "$industry" "$objective" "$relevant")"
+  else
+    echo "Create Engine"
+    echo "Industry: $industry"
+    echo "Portfolio: $objective"
+    echo ""
+    echo "Relevant tickers:"
+    echo "$relevant"
+  fi
+  echo ""
+
+  ensure_cstm_builder_ready || return 0
+
+  info "Running optimization for ${objective}..."
+  local result_json
+  result_json="$(run_cstm_optimizer_json "$industry" "$objective")"
+
+  local ok_flag
+  ok_flag="$(printf '%s' "$result_json" | python3 - <<'PY'
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print("1" if data.get("ok") else "0")
+except Exception:
+    print("0")
+PY
+)"
+  if [ "$ok_flag" != "1" ]; then
+    local err
+    err="$(printf '%s' "$result_json" | python3 - <<'PY'
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get("error", "Create Engine failed."))
+except Exception:
+    print("Create Engine failed.")
+PY
+)"
+    warn "$err"
+    return 0
+  fi
+
+  local -a candidate_options=()
+  mapfile -t candidate_options < <(build_cstm_candidate_labels "$result_json" "$objective")
+  if [ "${#candidate_options[@]}" -eq 0 ]; then
+    warn "No portfolio options were produced."
+    return 0
+  fi
+
+  local selected_option rank
+  selected_option="$(choose "Top 3 portfolio options (${objective})" "${candidate_options[@]}" "Back")"
+  [ "$selected_option" != "Back" ] || return 0
+  rank="${selected_option%%)*}"
+  [[ "$rank" =~ ^[0-9]+$ ]] || { warn "Invalid portfolio selection."; return 0; }
+
+  local candidate_json
+  candidate_json="$(cstm_candidate_by_rank "$result_json" "$rank")"
+  [ -n "$candidate_json" ] || { warn "Could not load selected portfolio."; return 0; }
+
+  local tickers_csv weights_json stop_json metrics_line
+  tickers_csv="$(printf '%s' "$candidate_json" | python3 - <<'PY'
+import json, sys
+c = json.load(sys.stdin)
+print(",".join(c.get("tickers", [])))
+PY
+)"
+  weights_json="$(printf '%s' "$candidate_json" | python3 - <<'PY'
+import json, sys
+c = json.load(sys.stdin)
+print(json.dumps(c.get("weights", {}), separators=(",", ":")))
+PY
+)"
+  stop_json="$(printf '%s' "$candidate_json" | python3 - <<'PY'
+import json, sys
+c = json.load(sys.stdin)
+tickers = c.get("tickers", [])
+print(json.dumps({t: 6.0 for t in tickers}, separators=(",", ":")))
+PY
+)"
+  metrics_line="$(printf '%s' "$candidate_json" | python3 - "$objective" <<'PY'
+import json, sys
+c = json.load(sys.stdin)
+metrics = c.get("metrics", {})
+objective = sys.argv[1]
+if objective == "STABILITY":
+    keys = ("Max Drawdown", "Annualized Volatility")
+elif objective == "EFFICIENCY":
+    keys = ("Sharpe (rf=0)", "Sortino (rf=0)", "Calmar (CAGR/|MaxDD|)")
+else:
+    keys = ("CAGR", "Total Return")
+print(" | ".join(f"{k}: {metrics.get(k, 'n/a')}" for k in keys))
+PY
+)"
+
+  local engine_name username
+  engine_name="$(input "Custom engine name (default: CSTM):")"
+  engine_name="${engine_name:-CSTM}"
+  engine_name="$(printf '%s' "$engine_name" | tr -cd '[:alnum:] _-')"
+  engine_name="${engine_name:-CSTM}"
+
+  username="$(input "Username:")"
+  username="${username:-unknown}"
+
+  set_persistent_export "CSTM_ENGINE_NAME" "$engine_name"
+  set_persistent_export "CSTM_USERNAME" "$username"
+  set_persistent_export "CSTM_INDUSTRY" "$industry"
+  set_persistent_export "CSTM_OBJECTIVE" "$objective"
+  set_persistent_export "CSTM_TICKERS" "$tickers_csv"
+  set_persistent_export "CSTM_WEIGHTS_JSON" "$weights_json"
+  set_persistent_export "CSTM_STOP_LOSS_PCT_JSON" "$stop_json"
+  set_persistent_export "CSTM_ACCOUNT_MODE" "paper"
+
+  ok "Custom engine saved as ${engine_name}."
+  info "Selected portfolio metrics -> ${metrics_line}"
+
+  local action
+  action="$(choose "Custom engine ready" "Run CSTM now" "Back")"
+  if [ "$action" = "Run CSTM now" ]; then
+    cstm_run_now_if_possible
+  fi
+}
+
 list_sessions_raw() {
   # screen -ls returns exit code 1 when there are no sockets; don't let set -e kill the menu
   command -v screen >/dev/null 2>&1 || return 0
@@ -2871,14 +3020,18 @@ connect_only_session() {
 
 create_new_session() {
   local name="$1"
-  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session"
+  local autorun_engine="${2:-}"
+  local cmd="cd \$HOME && export TERM=screen-256color"
+  if [ -n "$autorun_engine" ]; then
+    cmd="${cmd} && export ALGORA1_AUTORUN_ENGINE=${autorun_engine}"
+  fi
+  cmd="${cmd} && exec /usr/local/bin/algora1-session"
+  screen -S "$name" -dm bash -lc "$cmd"
 }
 
 engine_running_anywhere() {
-  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
-  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
-  pgrep -af 'python3 .*PMNY\.py' >/dev/null 2>&1 && return 0
-  pgrep -af -- '--engine-launcher' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -2889,12 +3042,8 @@ log_for_engine() {
     TSLA) echo "tsla_investing.log" ;;
     NVDA) echo "nvda_investing.log" ;;
     PMNY) echo "pmny_investing.log" ;;
-    *)
-      local slug
-      slug="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
-      [ -n "$slug" ] || slug="pmny"
-      echo "${slug}_investing.log"
-      ;;
+    CSTM) echo "cstm_investing.log" ;;
+    *) echo "pmny_investing.log" ;;
   esac
 }
 
@@ -2904,12 +3053,8 @@ live_status_for_engine() {
     TSLA) echo "tsla_live_status.txt" ;;
     NVDA) echo "nvda_live_status.txt" ;;
     PMNY) echo "pmny_live_status.txt" ;;
-    *)
-      local slug
-      slug="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
-      [ -n "$slug" ] || slug="pmny"
-      echo "${slug}_live_status.txt"
-      ;;
+    CSTM) echo "cstm_live_status.txt" ;;
+    *) echo "pmny_live_status.txt" ;;
   esac
 }
 
@@ -2917,23 +3062,10 @@ detect_running_engine_best_effort() {
   # Match only executable basename (argv[0]), so plain "TSLA" args don't count.
   ps -eo args= 2>/dev/null | awk '
     {
-      for (i=1; i<=NF; i++) {
-        if ($i=="--engine-launcher" && i<NF) {
-          print $(i+1)
-          found=1
-          exit 0
-        }
-      }
-
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY") {
+      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY" || cmd=="CSTM") {
         print cmd
-        found=1
-        exit 0
-      }
-      if (cmd=="python3" && $0 ~ /PMNY\.py/) {
-        print "PMNY"
         found=1
         exit 0
       }
@@ -3028,30 +3160,6 @@ running_sessions_menu() {
   fi
 }
 
-engine_builder_menu() {
-  hard_clear
-  cursor_show
-
-  [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
-  [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
-
-  if [ -x "$HOME/engine_builder_cli" ]; then
-    "$HOME/engine_builder_cli" || true
-  elif [ -f "$HOME/engine_builder_cli.py" ]; then
-    python3 "$HOME/engine_builder_cli.py" || true
-  else
-    center_box $'Engine Builder script not found.\n\nExpected one of:\n~/engine_builder_cli\n~/engine_builder_cli.py\n\nPress Enter to return to the menu.'
-    ui_wait_enter_only
-    hard_clear
-    return 0
-  fi
-  echo ""
-  echo "Press Enter to return to the menu."
-  read -r _discard || true
-  hard_clear
-  return 0
-}
-
 live_status_menu() {
   cursor_hide
 
@@ -3144,7 +3252,30 @@ live_charts_menu() {
   fi
 
   local pick symbol
+  local -a cstm_opts=()
   case "$eng" in
+    CSTM)
+      [ -f "$HOME/.profile" ] && source "$HOME/.profile" >/dev/null 2>&1 || true
+      [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" >/dev/null 2>&1 || true
+      while IFS= read -r tk; do
+        [ -n "$tk" ] || continue
+        cstm_opts+=("$tk")
+      done < <(
+        printf '%s' "${CSTM_TICKERS:-TSLA,NVDA}" \
+          | tr ',' '\n' \
+          | sed 's/[[:space:]]//g' \
+          | tr '[:lower:]' '[:upper:]' \
+          | tr '.' '-' \
+          | sed '/^$/d' \
+          | awk '!seen[$0]++'
+      )
+      [ "${#cstm_opts[@]}" -gt 0 ] || cstm_opts=( "TSLA" "NVDA" )
+      pick="$(choose "Live Charts" "${cstm_opts[@]}" "Back")"
+      case "$pick" in
+        "Back"|"" ) return 0 ;;
+        * ) symbol="$pick" ;;
+      esac
+      ;;
     NVDA)
       pick="$(choose "Live Charts" "NVIDIA Corporation (NVDA)" "Back")"
       case "$pick" in
@@ -3262,7 +3393,7 @@ main_loop() {
     local selection
     selection="$(choose "Select an option" \
       "Running session" \
-      "Engine Builder" \
+      "Create Engine" \
       "Live Status" \
       "Live Charts" \
       "System Activity" \
@@ -3270,7 +3401,7 @@ main_loop() {
 
     case "$selection" in
       "Running session") running_sessions_menu ;;
-      "Engine Builder") engine_builder_menu ;;
+      "Create Engine") create_engine_menu ;;
       "Live Status") live_status_menu ;;
       "Live Charts") live_charts_menu ;;
       "System Activity") troubleshoot_menu ;;
@@ -3334,7 +3465,7 @@ install_plan_confirm() {
     "Project" "${PROJECT_ID}" \
     "Zone" "${ZONE}" \
     "Machine" "${MACHINE_TYPE}" \
-    "Engines" "BEXP, TSLA, NVDA, PMNY"
+    "Engines" "BEXP, TSLA, NVDA, PMNY, CSTM"
 
   local choice
   choice="$(ui_choose "Proceed?" "Continue" "Exit")"
@@ -3409,7 +3540,6 @@ main() {
   customize_motd_on_vm "${ip}"
 
   copy_engines_from_wix_to_vm "${ip}"
-  copy_dynamic_builder_assets_to_vm "${ip}"
 
   install_control_panel_on_vm "${ip}"
 
