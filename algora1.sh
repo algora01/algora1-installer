@@ -16,11 +16,8 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
-# Set your custom artifact URLs here:
-# - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.py")
-# - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
-CSTM_ZIP_URL="${CSTM_ZIP_URL:-}"
-ENGINE_BUILDER_CORE_ZIP_URL="${ENGINE_BUILDER_CORE_ZIP_URL:-}"
+CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip"
+ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ca112bb6a1942d0992b0a8b7ad96c8e.zip"
 
 zip_url_for_engine() {
   case "$1" in
@@ -28,7 +25,7 @@ zip_url_for_engine() {
     PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
     TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
     NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
-    CSTM) echo "${CSTM_ZIP_URL}" ;;
+    CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip" ;;
     *) echo "" ;;
   esac
 }
