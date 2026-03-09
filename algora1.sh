@@ -16,19 +16,13 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
-# Set your custom artifact URLs here:
-# - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.py")
-# - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
-CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip"
-ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ca112bb6a1942d0992b0a8b7ad96c8e.zip"
-
 zip_url_for_engine() {
   case "$1" in
     BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ab6227986dd54662a8278789faa899d7.zip" ;;
     PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
     TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
     NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
-    CSTM) echo "${CSTM_ZIP_URL}" ;;
+    CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -788,29 +782,14 @@ copy_engines_from_wix_to_vm() {
     ui_ok "${name} uploaded"
   done
 
-  # engine_builder_core.py is uploaded from its own ZIP URL.
+  # engine_builder_core.py is embedded in the VM-side control panel and will
+  # be written on demand when Create Engine runs.
   local builder_dst="${remote_home}/engine_builder_core.py"
   if ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
     "${REMOTE_USER}@${ip}" "test -f '${builder_dst}'" >/dev/null 2>&1; then
     ui_ok "engine_builder_core.py already present; skipping"
   else
-    [ -n "${ENGINE_BUILDER_CORE_ZIP_URL}" ] || ui_die "No URL set for engine_builder_core.py (set ENGINE_BUILDER_CORE_ZIP_URL near the top of algora1.sh)"
-
-    local builder_workdir
-    builder_workdir="$(mktemp -d 2>/dev/null || mktemp -d -t algora1_zipwork)"
-
-    local builder_src
-    builder_src="$(download_and_extract_single_exe "engine_builder_core.py" "${ENGINE_BUILDER_CORE_ZIP_URL}" "${builder_workdir}")"
-
-    ui_spin "Uploading engine_builder_core.py…" scp -q -i "${key_path}" -o StrictHostKeyChecking=accept-new \
-      "${builder_src}" "${REMOTE_USER}@${ip}:${builder_dst}" \
-      || ui_die "Failed to upload engine_builder_core.py to VM"
-
-    ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new \
-      "${REMOTE_USER}@${ip}" "chmod 644 '${builder_dst}'" >/dev/null 2>&1 || true
-
-    rm -rf "${builder_workdir}" >/dev/null 2>&1 || true
-    ui_ok "engine_builder_core.py uploaded"
+    ui_info "engine_builder_core.py will be created from embedded payload when Create Engine is used."
   fi
 
   ui_ok "Engine transfer complete"
@@ -2702,10 +2681,763 @@ else:
 PY
 }
 
+write_embedded_engine_builder_core() {
+  cat > "$HOME/engine_builder_core.py" <<'PYCORE'
+#!/usr/bin/env python3
+"""Core portfolio optimization + backtest utilities for ALGORA1 engine builder."""
+
+from __future__ import annotations
+
+import math
+import os
+import re
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+
+SECTOR_UNIVERSE: Dict[str, List[str]] = {
+    "Information Technology": [
+        "AAPL",
+        "ACN",
+        "ADBE",
+        "AMD",
+        "AVGO",
+        "CSCO",
+        "IBM",
+        "INTC",
+        "INTU",
+        "MSFT",
+        "NVDA",
+        "ORCL",
+        "PLTR",
+        "QCOM",
+        "CRM",
+        "NOW",
+        "TXN",
+    ],
+    "Health Care": [
+        "ABBV",
+        "ABT",
+        "AMGN",
+        "BMY",
+        "CVS",
+        "DHR",
+        "LLY",
+        "GILD",
+        "ISRG",
+        "JNJ",
+        "MDT",
+        "MRK",
+        "PFE",
+        "TMO",
+        "UNH",
+    ],
+    "Financials": [
+        "AXP",
+        "AIG",
+        "BAC",
+        "BLK",
+        "BK",
+        "BRK-B",
+        "COF",
+        "C",
+        "SCHW",
+        "GS",
+        "JPM",
+        "MET",
+        "MS",
+        "USB",
+        "WFC",
+    ],
+    "Consumer Discretionary": [
+        "AMZN",
+        "BKNG",
+        "GM",
+        "HD",
+        "LOW",
+        "MCD",
+        "NKE",
+        "SBUX",
+        "TGT",
+        "TSLA",
+    ],
+    "Communication Services": [
+        "GOOGL",
+        "GOOG",
+        "T",
+        "CMCSA",
+        "META",
+        "NFLX",
+        "TMUS",
+        "VZ",
+        "DIS",
+    ],
+    "Industrials": [
+        "BA",
+        "CAT",
+        "DE",
+        "EMR",
+        "FDX",
+        "GD",
+        "GE",
+        "HON",
+        "LMT",
+        "RTX",
+        "UNP",
+        "UPS",
+    ],
+    "Consumer Staples": [
+        "MO",
+        "KO",
+        "CL",
+        "COST",
+        "MDLZ",
+        "PEP",
+        "PM",
+        "PG",
+        "WMT",
+    ],
+    "Energy": ["CVX", "COP", "XOM"],
+    "Materials": ["LIN", "MMM"],
+    "Utilities": ["DUK", "NEE", "SO"],
+    "Real Estate": ["AMT", "SPG"],
+}
+
+NO_PREFERENCE = "No preference"
+ALL_SECTORS = list(SECTOR_UNIVERSE.keys())
+
+OBJECTIVE_GROWTH = "GROWTH"
+OBJECTIVE_STABILITY = "STABILITY"
+OBJECTIVE_EFFICIENCY = "EFFICIENCY"
+VALID_OBJECTIVES = [OBJECTIVE_GROWTH, OBJECTIVE_STABILITY, OBJECTIVE_EFFICIENCY]
+
+DEFAULT_ENTRY_RULE = "close > sma50 and sma10 > sma20 and not (close < sma20 or open < sma20)"
+DEFAULT_EXIT_RULE = "close < sma20 or sma10 < sma20"
+
+
+@dataclass
+class StrategySpec:
+    entry_rule: str
+    exit_rule: str
+    stop_loss_pct: float = -6.0
+
+
+@dataclass
+class Metrics:
+    cagr: float
+    total_return: float
+    max_drawdown: float
+    calmar: float
+    annualized_volatility: float
+    sharpe: float
+    sortino: float
+    time_in_market: float
+    best_day: float
+    worst_day: float
+
+    def as_display(self) -> Dict[str, str]:
+        return {
+            "CAGR": f"{self.cagr * 100:.2f}%",
+            "Total Return": f"{self.total_return * 100:.2f}%",
+            "Max Drawdown": f"{self.max_drawdown * 100:.2f}%",
+            "Calmar (CAGR/|MaxDD|)": _fmt_num(self.calmar),
+            "Annualized Volatility": f"{self.annualized_volatility * 100:.2f}%",
+            "Sharpe (rf=0)": _fmt_num(self.sharpe),
+            "Sortino (rf=0)": _fmt_num(self.sortino),
+            "Time in Market": f"{self.time_in_market * 100:.2f}%",
+            "Best Day": f"{self.best_day * 100:.2f}%",
+            "Worst Day": f"{self.worst_day * 100:.2f}%",
+        }
+
+
+@dataclass
+class Candidate:
+    rank: int
+    score: float
+    objective: str
+    sectors: List[str]
+    tickers: List[str]
+    weights: Dict[str, float]
+    strategy: StrategySpec
+    metrics: Metrics
+    generated_at: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        out = asdict(self)
+        out["metrics_display"] = self.metrics.as_display()
+        return out
+
+
+_VALID_IDENTIFIERS = {
+    "open",
+    "high",
+    "low",
+    "close",
+    "sma10",
+    "sma20",
+    "sma50",
+    "sma200",
+    "and",
+    "or",
+    "not",
+    "True",
+    "False",
+}
+
+_DATA_CACHE: Dict[Tuple[str, int], pd.DataFrame] = {}
+
+
+def _fmt_num(v: float) -> str:
+    if pd.isna(v):
+        return "n/a"
+    return f"{v:.2f}"
+
+
+def normalize_ticker(ticker: str) -> str:
+    t = ticker.strip().upper()
+    if t == "BRK.B":
+        return "BRK-B"
+    return t
+
+
+def selected_universe(industries: Iterable[str]) -> Tuple[List[str], List[str]]:
+    picks = [i.strip() for i in industries if i and i.strip()]
+    if not picks or NO_PREFERENCE in picks:
+        sectors = ALL_SECTORS[:]
+    else:
+        sectors = [s for s in ALL_SECTORS if s in picks]
+    tickers: List[str] = []
+    for sector in sectors:
+        tickers.extend(SECTOR_UNIVERSE[sector])
+    dedup = list(dict.fromkeys(normalize_ticker(t) for t in tickers))
+    return sectors, dedup
+
+
+def parse_rule_expr(expr: str) -> str:
+    if not expr or not expr.strip():
+        raise ValueError("Rule cannot be empty.")
+    norm = expr.strip()
+    norm = re.sub(r"\bAND\b", "and", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bOR\b", "or", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bNOT\b", "not", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"(?<![=!<>])!(?!=)", " not ", norm)
+    norm = re.sub(r"\bSMA10\b", "sma10", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bSMA20\b", "sma20", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bSMA50\b", "sma50", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bSMA200\b", "sma200", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bOPEN\b", "open", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bHIGH\b", "high", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bLOW\b", "low", norm, flags=re.IGNORECASE)
+    norm = re.sub(r"\bCLOSE\b", "close", norm, flags=re.IGNORECASE)
+
+    if "__" in norm or "[" in norm or "]" in norm or "{" in norm or "}" in norm:
+        raise ValueError("Rule contains unsupported characters.")
+
+    if not re.fullmatch(r"[A-Za-z0-9_().<>=!&|+\-*/ \t]+", norm):
+        raise ValueError("Rule has invalid tokens.")
+
+    ids = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", norm))
+    bad = [x for x in ids if x not in _VALID_IDENTIFIERS]
+    if bad:
+        raise ValueError(f"Unsupported fields/keywords in rule: {', '.join(sorted(bad))}")
+    return norm
+
+
+def validate_strategy(strategy: StrategySpec) -> StrategySpec:
+    return StrategySpec(
+        entry_rule=parse_rule_expr(strategy.entry_rule),
+        exit_rule=parse_rule_expr(strategy.exit_rule),
+        stop_loss_pct=float(strategy.stop_loss_pct),
+    )
+
+
+def parse_chat_prompt(prompt: str) -> Dict[str, Any]:
+    text = (prompt or "").strip()
+    low = text.lower()
+
+    mode = "paper"
+    if re.search(r"\blive\b", low):
+        mode = "live"
+    elif re.search(r"\bpaper\b", low):
+        mode = "paper"
+
+    objective = OBJECTIVE_GROWTH
+    if re.search(r"stability|lowest risk|smoother|low risk", low):
+        objective = OBJECTIVE_STABILITY
+    elif re.search(r"efficiency|risk[- ]adjusted|sharpe|sortino|calmar", low):
+        objective = OBJECTIVE_EFFICIENCY
+    elif re.search(r"growth|highest return|cagr|total return", low):
+        objective = OBJECTIVE_GROWTH
+
+    industries: List[str] = []
+    for sector in ALL_SECTORS:
+        if sector.lower() in low:
+            industries.append(sector)
+    if not industries and (re.search(r"no preference|any sector|all sector", low) or not text):
+        industries = [NO_PREFERENCE]
+
+    entry_rule = DEFAULT_ENTRY_RULE
+    exit_rule = DEFAULT_EXIT_RULE
+
+    buy_match = re.search(r"(?:buy|entry)\s+(?:when|if)\s+(.+?)(?:;|,|\n|$)", text, flags=re.IGNORECASE)
+    sell_match = re.search(r"(?:sell|exit)\s+(?:when|if)\s+(.+?)(?:;|,|\n|$)", text, flags=re.IGNORECASE)
+    if buy_match:
+        entry_rule = buy_match.group(1).strip()
+    if sell_match:
+        exit_rule = sell_match.group(1).strip()
+
+    return {
+        "mode": mode,
+        "objective": objective,
+        "industries": industries or [NO_PREFERENCE],
+        "strategy": StrategySpec(entry_rule=entry_rule, exit_rule=exit_rule, stop_loss_pct=-6.0),
+    }
+
+
+def fetch_ohlc(ticker: str, years: int = 10) -> Optional[pd.DataFrame]:
+    key = (ticker, years)
+    if key in _DATA_CACHE:
+        return _DATA_CACHE[key].copy()
+
+    try:
+        hist = yf.Ticker(ticker).history(period=f"{years}y", interval="1d")
+    except Exception:
+        return None
+    if hist is None or hist.empty:
+        return None
+
+    df = hist.rename(
+        columns={"Open": "open", "High": "high", "Low": "low", "Close": "close"}
+    )[["open", "high", "low", "close"]].copy()
+    idx = pd.to_datetime(df.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_localize(None)
+    df.index = idx
+    df = df.sort_index()
+    _DATA_CACHE[key] = df.copy()
+    return df
+
+
+def _build_indicator_frame(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["sma10"] = out["close"].rolling(10).mean()
+    out["sma20"] = out["close"].rolling(20).mean()
+    out["sma50"] = out["close"].rolling(50).mean()
+    out["sma200"] = out["close"].rolling(200).mean()
+    out = out.dropna(subset=["sma50"]).copy()
+    return out
+
+
+def _eval_rule(rule: str, df: pd.DataFrame) -> pd.Series:
+    code = parse_rule_expr(rule)
+    ctx = {
+        "open": df["open"],
+        "high": df["high"],
+        "low": df["low"],
+        "close": df["close"],
+        "sma10": df["sma10"],
+        "sma20": df["sma20"],
+        "sma50": df["sma50"],
+        "sma200": df["sma200"],
+    }
+    try:
+        out = eval(code, {"__builtins__": {}}, ctx)
+    except Exception as exc:
+        raise ValueError(f"Could not evaluate rule '{rule}': {exc}") from exc
+    if isinstance(out, (bool, np.bool_)):
+        return pd.Series([bool(out)] * len(df), index=df.index)
+    if not isinstance(out, pd.Series):
+        raise ValueError(f"Rule '{rule}' did not evaluate to a boolean series.")
+    return out.fillna(False).astype(bool)
+
+
+def perf_metrics_from_nav(nav_df: pd.DataFrame) -> Metrics:
+    if nav_df is None or nav_df.empty:
+        return Metrics(
+            cagr=np.nan,
+            total_return=np.nan,
+            max_drawdown=np.nan,
+            calmar=np.nan,
+            annualized_volatility=np.nan,
+            sharpe=np.nan,
+            sortino=np.nan,
+            time_in_market=np.nan,
+            best_day=np.nan,
+            worst_day=np.nan,
+        )
+
+    r = nav_df["daily_ret"].astype(float)
+    eq = nav_df["equity"].astype(float)
+    days = max((nav_df.index[-1] - nav_df.index[0]).days, 1)
+    years = days / 365.25
+
+    cagr = (eq.iloc[-1] / eq.iloc[0]) ** (1.0 / max(years, 1e-9)) - 1.0
+    total_return = (eq.iloc[-1] / eq.iloc[0]) - 1.0
+    vol = r.std(ddof=0) * math.sqrt(252)
+    mean = r.mean() * 252
+    sharpe = (mean / vol) if vol > 0 else np.nan
+
+    downside = r[r < 0]
+    downside_vol = downside.std(ddof=0) * math.sqrt(252)
+    sortino = (mean / downside_vol) if downside_vol > 0 else np.nan
+
+    peak = eq.cummax()
+    dd = (eq / peak) - 1.0
+    max_dd = float(dd.min()) if len(dd) else np.nan
+    calmar = (cagr / abs(max_dd)) if (not pd.isna(max_dd) and max_dd < 0) else np.nan
+    time_in_market = float(nav_df["in_market"].mean()) if "in_market" in nav_df.columns else np.nan
+    best_day = float(r.max()) if len(r) else np.nan
+    worst_day = float(r.min()) if len(r) else np.nan
+
+    return Metrics(
+        cagr=float(cagr),
+        total_return=float(total_return),
+        max_drawdown=float(max_dd),
+        calmar=float(calmar) if not pd.isna(calmar) else np.nan,
+        annualized_volatility=float(vol),
+        sharpe=float(sharpe) if not pd.isna(sharpe) else np.nan,
+        sortino=float(sortino) if not pd.isna(sortino) else np.nan,
+        time_in_market=float(time_in_market),
+        best_day=float(best_day),
+        worst_day=float(worst_day),
+    )
+
+
+def score_metrics(metrics: Metrics, objective: str) -> float:
+    if objective == OBJECTIVE_STABILITY:
+        return (
+            -abs(metrics.max_drawdown if not pd.isna(metrics.max_drawdown) else -1.0)
+            - (metrics.annualized_volatility if not pd.isna(metrics.annualized_volatility) else 1.0)
+            + 0.25 * (metrics.cagr if not pd.isna(metrics.cagr) else -1.0)
+        )
+    if objective == OBJECTIVE_EFFICIENCY:
+        return (
+            (metrics.sharpe if not pd.isna(metrics.sharpe) else -10.0)
+            + (metrics.sortino if not pd.isna(metrics.sortino) else -10.0)
+            + (metrics.calmar if not pd.isna(metrics.calmar) else -10.0)
+            + 0.1 * (metrics.cagr if not pd.isna(metrics.cagr) else -1.0)
+        )
+    # Growth default
+    return (
+        1.2 * (metrics.cagr if not pd.isna(metrics.cagr) else -1.0)
+        + 0.8 * (metrics.total_return if not pd.isna(metrics.total_return) else -1.0)
+        - 0.25 * abs(metrics.max_drawdown if not pd.isna(metrics.max_drawdown) else -1.0)
+        - 0.1 * (metrics.annualized_volatility if not pd.isna(metrics.annualized_volatility) else 1.0)
+    )
+
+
+def run_ticker_strategy(
+    ticker: str,
+    strategy: StrategySpec,
+    years: int = 10,
+    start_equity: float = 10000.0,
+) -> Optional[Dict[str, Any]]:
+    raw = fetch_ohlc(ticker, years=years)
+    if raw is None or raw.empty:
+        return None
+
+    df = _build_indicator_frame(raw)
+    if len(df) < 220:
+        return None
+
+    entry = _eval_rule(strategy.entry_rule, df)
+    exit_rule = _eval_rule(strategy.exit_rule, df)
+
+    holding = False
+    shares = 0.0
+    entry_price = 0.0
+    stop_price = 0.0
+    buy_dt = None
+    equity = float(start_equity)
+
+    equity_series: List[float] = []
+    in_mkt_series: List[bool] = []
+    trade_rows: List[Dict[str, Any]] = []
+    dates = df.index
+
+    for i in range(1, len(df)):
+        dt = dates[i]
+        close_price = float(df["close"].iloc[i])
+        low_price = float(df["low"].iloc[i])
+        ent = bool(entry.iloc[i])
+        ent_prev = bool(entry.iloc[i - 1])
+        ex = bool(exit_rule.iloc[i])
+        ex_prev = bool(exit_rule.iloc[i - 1])
+
+        if not holding:
+            if ent and not ent_prev:
+                holding = True
+                entry_price = close_price
+                buy_dt = dt
+                stop_price = entry_price * (1.0 + strategy.stop_loss_pct / 100.0)
+                shares = equity / entry_price if entry_price > 0 else 0.0
+            equity_series.append(equity)
+            in_mkt_series.append(False)
+            continue
+
+        if low_price <= stop_price:
+            exit_price = stop_price
+            equity = shares * exit_price
+            trade_rows.append(
+                {
+                    "ticker": ticker,
+                    "buy_date": buy_dt,
+                    "sell_date": dt,
+                    "buy_price": entry_price,
+                    "sell_price": exit_price,
+                    "return": (exit_price / entry_price) - 1.0,
+                    "exit_type": "STOP_LOSS",
+                }
+            )
+            holding = False
+            shares = 0.0
+            entry_price = 0.0
+            stop_price = 0.0
+            buy_dt = None
+            equity_series.append(equity)
+            in_mkt_series.append(True)
+            continue
+
+        if ex and not ex_prev:
+            exit_price = close_price
+            equity = shares * exit_price
+            trade_rows.append(
+                {
+                    "ticker": ticker,
+                    "buy_date": buy_dt,
+                    "sell_date": dt,
+                    "buy_price": entry_price,
+                    "sell_price": exit_price,
+                    "return": (exit_price / entry_price) - 1.0,
+                    "exit_type": "SIGNAL",
+                }
+            )
+            holding = False
+            shares = 0.0
+            entry_price = 0.0
+            stop_price = 0.0
+            buy_dt = None
+            equity_series.append(equity)
+            in_mkt_series.append(True)
+            continue
+
+        equity_series.append(shares * close_price)
+        in_mkt_series.append(True)
+
+    nav = pd.DataFrame(
+        {"equity": equity_series, "in_market": in_mkt_series},
+        index=dates[1:],
+    )
+    nav["daily_ret"] = nav["equity"].pct_change().fillna(0.0)
+    metrics = perf_metrics_from_nav(nav)
+    return {"ticker": ticker, "nav": nav, "metrics": metrics, "trades": trade_rows}
+
+
+def _portfolio_nav(
+    ticker_results: Dict[str, Dict[str, Any]],
+    tickers: List[str],
+    weights: Optional[Dict[str, float]] = None,
+    start_equity: float = 10000.0,
+) -> pd.DataFrame:
+    if not tickers:
+        return pd.DataFrame(columns=["equity", "daily_ret", "in_market"])
+
+    if weights is None:
+        w = 1.0 / len(tickers)
+        weights = {t: w for t in tickers}
+
+    merged: Optional[pd.DataFrame] = None
+    for t in tickers:
+        nav = ticker_results[t]["nav"][["daily_ret", "in_market"]].copy()
+        nav = nav.rename(columns={"daily_ret": f"r_{t}", "in_market": f"m_{t}"})
+        if merged is None:
+            merged = nav
+        else:
+            merged = merged.join(nav, how="outer")
+    assert merged is not None
+    merged = merged.fillna(0.0).sort_index()
+
+    ret_cols = [f"r_{t}" for t in tickers]
+    merged["daily_ret"] = 0.0
+    for t in tickers:
+        merged["daily_ret"] += merged[f"r_{t}"] * float(weights[t])
+
+    merged["equity"] = (1.0 + merged["daily_ret"]).cumprod() * start_equity
+    m_cols = [f"m_{t}" for t in tickers]
+    merged["in_market"] = merged[m_cols].astype(bool).any(axis=1).astype(float)
+    return merged[["equity", "daily_ret", "in_market"]]
+
+
+def optimize_top_candidates(
+    industries: Iterable[str],
+    objective: str,
+    strategy: StrategySpec,
+    years: int = 10,
+    max_tickers: int = 6,
+    prefilter_count: int = 14,
+    top_n: int = 3,
+) -> List[Candidate]:
+    if objective not in VALID_OBJECTIVES:
+        raise ValueError(f"Unsupported objective '{objective}'.")
+    strategy = validate_strategy(strategy)
+    sectors, universe = selected_universe(industries)
+    if not universe:
+        return []
+
+    ticker_results: Dict[str, Dict[str, Any]] = {}
+    singles: List[Tuple[str, float]] = []
+    for t in universe:
+        result = run_ticker_strategy(t, strategy=strategy, years=years)
+        if result is None:
+            continue
+        ticker_results[t] = result
+        singles.append((t, score_metrics(result["metrics"], objective)))
+
+    if not singles:
+        return []
+
+    singles.sort(key=lambda x: x[1], reverse=True)
+    prefiltered = [t for t, _ in singles[:prefilter_count]]
+    seed_count = min(5, len(prefiltered))
+
+    scored_combo: Dict[Tuple[str, ...], Tuple[float, Metrics, Dict[str, float]]] = {}
+
+    def evaluate_combo(combo: List[str]) -> Tuple[float, Metrics, Dict[str, float]]:
+        w = 1.0 / len(combo)
+        weights = {t: w for t in combo}
+        nav = _portfolio_nav(ticker_results, combo, weights=weights)
+        metrics = perf_metrics_from_nav(nav)
+        score = score_metrics(metrics, objective)
+        return score, metrics, weights
+
+    for seed in prefiltered[:seed_count]:
+        combo = [seed]
+        score, metrics, weights = evaluate_combo(combo)
+        scored_combo[tuple(sorted(combo))] = (score, metrics, weights)
+
+        while len(combo) < max_tickers:
+            best_add: Optional[str] = None
+            best_pack: Optional[Tuple[float, Metrics, Dict[str, float]]] = None
+
+            for t in prefiltered:
+                if t in combo:
+                    continue
+                test = combo + [t]
+                pack = evaluate_combo(test)
+                if best_pack is None or pack[0] > best_pack[0]:
+                    best_add = t
+                    best_pack = pack
+
+            if best_add is None or best_pack is None:
+                break
+
+            if best_pack[0] <= score + 1e-9:
+                break
+
+            combo.append(best_add)
+            score, metrics, weights = best_pack
+            scored_combo[tuple(sorted(combo))] = (score, metrics, weights)
+
+    ranked = sorted(scored_combo.items(), key=lambda item: item[1][0], reverse=True)[:top_n]
+    ts = pd.Timestamp.utcnow().tz_localize("UTC").isoformat()
+    out: List[Candidate] = []
+    for idx, (combo_key, pack) in enumerate(ranked, start=1):
+        combo = list(combo_key)
+        score, metrics, weights = pack
+        out.append(
+            Candidate(
+                rank=idx,
+                score=float(score),
+                objective=objective,
+                sectors=sectors,
+                tickers=combo,
+                weights={k: float(v) for k, v in weights.items()},
+                strategy=strategy,
+                metrics=metrics,
+                generated_at=ts,
+            )
+        )
+    return out
+
+
+def candidate_to_engine_config(
+    candidate: Candidate,
+    engine_name: str,
+    account_mode: str,
+) -> Dict[str, Any]:
+    clean = re.sub(r"[^A-Za-z0-9_-]+", "", engine_name.strip())
+    if not clean:
+        clean = "engine"
+    slug = clean.lower()
+    return {
+        "engine_name": clean,
+        "engine_slug": slug,
+        "mode": account_mode.lower(),
+        "objective": candidate.objective,
+        "industries": candidate.sectors,
+        "tickers": candidate.tickers,
+        "weights": candidate.weights,
+        "strategy": {
+            "entry_rule": candidate.strategy.entry_rule,
+            "exit_rule": candidate.strategy.exit_rule,
+            "stop_loss_pct": float(candidate.strategy.stop_loss_pct),
+        },
+        "stop_loss_pct": {
+            t: float(abs(candidate.strategy.stop_loss_pct)) for t in candidate.tickers
+        },
+        "created_at": pd.Timestamp.utcnow().tz_localize("UTC").isoformat(),
+        "metrics_snapshot": candidate.metrics.as_display(),
+    }
+
+
+def nav_and_trades_for_candidate(
+    candidate: Candidate,
+    years: int = 10,
+    start_equity: float = 10000.0,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    strategy = candidate.strategy
+    results: Dict[str, Dict[str, Any]] = {}
+    all_trades: List[Dict[str, Any]] = []
+    for t in candidate.tickers:
+        r = run_ticker_strategy(t, strategy=strategy, years=years, start_equity=start_equity)
+        if r is None:
+            continue
+        results[t] = r
+        all_trades.extend(r["trades"])
+    if not results:
+        return (
+            pd.DataFrame(columns=["equity", "daily_ret", "in_market"]),
+            pd.DataFrame(),
+        )
+    nav = _portfolio_nav(results, candidate.tickers, candidate.weights, start_equity=start_equity)
+    trades = pd.DataFrame(all_trades)
+    if not trades.empty:
+        trades = trades.sort_values("sell_date").reset_index(drop=True)
+    return nav, trades
+
+
+def default_strategy() -> StrategySpec:
+    return StrategySpec(
+        entry_rule=DEFAULT_ENTRY_RULE,
+        exit_rule=DEFAULT_EXIT_RULE,
+        stop_loss_pct=-6.0,
+    )
+
+PYCORE
+  chmod 644 "$HOME/engine_builder_core.py" >/dev/null 2>&1 || true
+}
+
 ensure_cstm_builder_ready() {
   if [ ! -f "$HOME/engine_builder_core.py" ]; then
-    warn "Missing ~/engine_builder_core.py on VM. Re-run setup to upload custom engine assets."
-    return 1
+    info "Installing embedded engine_builder_core.py..."
+    write_embedded_engine_builder_core || {
+      warn "Could not write ~/engine_builder_core.py from embedded payload."
+      return 1
+    }
   fi
 
   if python3 - <<'PY' >/dev/null 2>&1; then
