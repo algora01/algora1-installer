@@ -14,9 +14,7 @@ MACHINE_TYPE_DEFAULT="e2-custom-1-3072"
 IMAGE_FAMILY="ubuntu-2404-lts-amd64"
 IMAGE_PROJECT="ubuntu-os-cloud"
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
-
-CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6fc0e7d8aac3405fb42fc604ffe4e58f.zip"
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
@@ -24,7 +22,6 @@ zip_url_for_engine() {
     PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
     TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
     NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
-    CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6fc0e7d8aac3405fb42fc604ffe4e58f.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -249,49 +246,25 @@ ui_spin() {
 
 ui_choose() {
   local title="$1"; shift
-  local -a opts=("$@")
-  local back_gap=0
-  local last_idx=-1
-
-  if [ "${#opts[@]}" -gt 0 ]; then
-    last_idx=$(( ${#opts[@]} - 1 ))
-    if [ "${opts[$last_idx]}" = "Back" ]; then
-      if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        back_gap=1
-      fi
-    fi
-  fi
-
   if ui_has_gum; then
-    local selected=""
-    selected="$(gum choose \
+    gum choose \
       --header "$title" \
       --header.foreground ${C_ACCENT} \
       --item.foreground ${C_ACCENT} \
       --selected.foreground ${C_ACCENT} \
       --cursor.foreground ${C_CURSOR} \
-      "${opts[@]}" || true)"
-    printf "%s\n" "$selected"
-    return 0
+      "$@"
   else
     printf "%s\n" "$title" >&2
     local i=1
-    local opt
-    for opt in "${opts[@]}"; do
-      if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
-        printf "\n" >&2
-      fi
+    for opt in "$@"; do
       printf "  %d) %s\n" "$i" "$opt" >&2
       i=$((i+1))
     done
-    local count="${#opts[@]}"
-    printf "Select [1-%d]: " "$count" >&2
+    printf "Select [1-%d]: " "$(($#))" >&2
     local n; read -r n
     n="${n:-1}"
-    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
-      n=1
-    fi
-    printf "%s\n" "${opts[$((n - 1))]}"
+    echo "${@:n:1}"
   fi
 }
 
@@ -725,7 +698,7 @@ download_and_extract_single_exe() {
 
   local candidates=()
   while IFS= read -r -d '' f; do candidates+=("$f"); done < <(
-    find "${extract_dir}" -type f \( -name "${name}" -o -name "${name}.exe" -o -name "${name}.py" \) -print0
+    find "${extract_dir}" -type f \( -name "${name}" -o -name "${name}.exe" \) -print0
   )
 
   if [ "${#candidates[@]}" -eq 0 ]; then
@@ -735,7 +708,7 @@ download_and_extract_single_exe() {
   fi
 
   if [ "${#candidates[@]}" -ne 1 ]; then
-    ui_warn "${name}.zip must contain exactly ONE engine file (named '${name}', '${name}.py', or '${name}.exe'). Found: ${#candidates[@]}"
+    ui_warn "${name}.zip must contain exactly ONE engine file (named '${name}' or '${name}.exe'). Found: ${#candidates[@]}"
     ui_warn "Files found:"
     (cd "${extract_dir}" && find . -maxdepth 3 -type f -print) >&2 || true
     ui_die "Bad zip format for ${name}"
@@ -783,16 +756,6 @@ copy_engines_from_wix_to_vm() {
 
     ui_ok "${name} uploaded"
   done
-
-  # engine_builder_core.py is embedded in the VM-side control panel and will
-  # be written on demand when Create Engine runs.
-  local builder_dst="${remote_home}/engine_builder_core.py"
-  if ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
-    "${REMOTE_USER}@${ip}" "test -f '${builder_dst}'" >/dev/null 2>&1; then
-    ui_ok "engine_builder_core.py already present; skipping"
-  else
-    ui_info "engine_builder_core.py will be created from embedded payload when Create Engine is used."
-  fi
 
   ui_ok "Engine transfer complete"
 }
@@ -1321,11 +1284,11 @@ ensure_credentials_tui() {
     return
   fi
 
-  ui_info "Enter Alpaca LIVE credentials (used by BEXP/TSLA/NVDA, optional for CSTM live mode)."
+  ui_info "Enter Alpaca LIVE credentials (used by BEXP/TSLA/NVDA)."
   ALPACA_LIVE_API_KEY="$(ui_input "ALPACA_LIVE_API_KEY:")"
   ALPACA_LIVE_SECRET_KEY="$(ui_secret "ALPACA_LIVE_SECRET_KEY:")"
 
-  ui_info "Enter Alpaca PAPER credentials (used by PMNY and CSTM paper mode)."
+  ui_info "Enter Alpaca PAPER credentials (used by PMNY)."
   ALPACA_PAPER_API_KEY="$(ui_input "ALPACA_PAPER_API_KEY:")"
   ALPACA_PAPER_SECRET_KEY="$(ui_secret "ALPACA_PAPER_SECRET_KEY:")"
 
@@ -1403,7 +1366,6 @@ printf "Run: \033[38;5;39malgora1\033[0m\n\n"
 
 printf "\033[1mMain Menu\033[0m\n"
 printf "  • Running session\n"
-printf "  • Create Engine\n"
 printf "  • Live Status\n"
 printf "  • Live Charts\n"
 printf "  • Exit\n\n"
@@ -1459,7 +1421,7 @@ case "${TERM:-}" in
   screen|screen-bce) export TERM="screen-256color" ;;
 esac
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
@@ -1478,19 +1440,6 @@ EOT
 
 choose() {
   local title="$1"; shift
-  local -a opts=("$@")
-  local back_gap=0
-  local last_idx=-1
-
-  if [ "${#opts[@]}" -gt 0 ]; then
-    last_idx=$(( ${#opts[@]} - 1 ))
-    if [ "${opts[$last_idx]}" = "Back" ]; then
-      if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        back_gap=1
-      fi
-    fi
-  fi
-
   if has_gum; then
     local h=18
     local lines=""
@@ -1501,8 +1450,15 @@ choose() {
       fi
     fi
 
-    local selected=""
-    selected="$(gum choose \
+    # Pin navigation hint to terminal bottom; hide gum's built-in help line.
+    if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
+      tput sc 1>&2 2>/dev/null || true
+      tput cup $((lines - 1)) 0 1>&2 2>/dev/null || true
+      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m' >&2
+      tput rc 1>&2 2>/dev/null || true
+    fi
+
+    gum choose \
       --header "$title" \
       --header.foreground 39 \
       --item.foreground 39 \
@@ -1510,27 +1466,15 @@ choose() {
       --selected.background 39 \
       --cursor.foreground 33 \
       --height "${h}" \
-      "${opts[@]}" || true)"
-    printf "%s\n" "$selected"
-    return 0
+      --no-show-help \
+      "$@"
   else
     echo "$title" >&2
     local i=1
-    local opt
-    for opt in "${opts[@]}"; do
-      if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
-        printf "\n" >&2
-      fi
-      echo "  $i) $opt" >&2
-      i=$((i+1))
-    done
-    local count="${#opts[@]}"
-    printf "Select [1-%d]: " "$count" >&2
+    for opt in "$@"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    printf "Select [1-%d]: " "$#" >&2
     local n; read -r n; n="${n:-1}"
-    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
-      n=1
-    fi
-    printf "%s\n" "${opts[$((n - 1))]}"
+    echo "${@:n:1}"
   fi
 }
 
@@ -1544,7 +1488,7 @@ engine_running_anywhere() {
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA" || cmd=="CSTM") {
+      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA") {
         found=1
         exit 0
       }
@@ -1559,35 +1503,21 @@ run_engine_prompt_if_safe() {
     return 0
   fi
 
-  local engine="${ALGORA1_AUTORUN_ENGINE:-}"
-  if [ -n "${engine}" ]; then
-    unset ALGORA1_AUTORUN_ENGINE
-  else
-    local action
-    action="$(choose "Run investment engine?" "Run investment engine" "Back")"
+  local action
+  action="$(choose "Run investment engine?" "Run investment engine" "Back")"
 
-    # IMPORTANT: Back should exit the screen session so you return to the Home menu
-    if [ "$action" != "Run investment engine" ]; then
-      return 1
-    fi
-
-    engine="$(choose "Select engine" "${ENGINE_NAMES[@]}")"
-    [ -n "$engine" ] || return 1
+  # IMPORTANT: Back should exit the screen session so you return to the Home menu
+  if [ "$action" != "Run investment engine" ]; then
+    return 1
   fi
 
-  local valid=0
-  local candidate
-  for candidate in "${ENGINE_NAMES[@]}"; do
-    if [ "$candidate" = "$engine" ]; then
-      valid=1
-      break
-    fi
-  done
-  [ "$valid" -eq 1 ] || return 1
+  local engine
+  engine="$(choose "Select engine" "${ENGINE_NAMES[@]}")"
+  [ -n "$engine" ] || return 1
 
   printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
-  chmod +x "./${engine}" "/usr/local/bin/${engine}" >/dev/null 2>&1 || true
+  chmod +x "./${engine}" >/dev/null 2>&1 || true
 
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
@@ -1601,25 +1531,7 @@ run_engine_prompt_if_safe() {
     return 0
   fi
 
-  local engine_path="./${engine}"
-  [ -x "${engine_path}" ] || engine_path="/usr/local/bin/${engine}"
-  if [ "$engine" = "CSTM" ]; then
-    local magic_hex=""
-    magic_hex="$(od -An -tx1 -N4 "${engine_path}" 2>/dev/null | tr -d '[:space:]')"
-    if [[ "${magic_hex}" == 4d5a* ]]; then
-      warn "CSTM appears to be a Windows .exe. Linux VM cannot run Windows executables."
-      warn "Upload CSTM as a Python script (file named CSTM or CSTM.py in the zip) or a Linux binary."
-      return 0
-    fi
-
-    if [ "${magic_hex}" = "7f454c46" ]; then
-      "${engine_path}"
-    else
-      python3 "${engine_path}"
-    fi
-  else
-    "${engine_path}"
-  fi
+  "./${engine}"
   return 0
 }
 
@@ -1654,10 +1566,10 @@ sudo tee /usr/local/bin/algora1-live-chart >/dev/null <<'CHART'
 set -euo pipefail
 
 SYMBOL="${1:-TSLA}"
-SYMBOL="$(printf "%s" "$SYMBOL" | tr '[:lower:]' '[:upper:]' | tr '.' '-')"
-if ! printf "%s" "$SYMBOL" | grep -Eq '^[A-Z0-9-]+$'; then
-  SYMBOL="TSLA"
-fi
+case "$SYMBOL" in
+  TSLA|NVDA) ;;
+  *) SYMBOL="TSLA" ;;
+esac
 
 python3 - "$SYMBOL" <<'PY'
 import json
@@ -2173,7 +2085,7 @@ case "${TERM:-}" in
   screen|screen-bce) export TERM="screen-256color" ;;
 esac
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
@@ -2501,19 +2413,6 @@ secs_until_midnight_et() {
 
 choose() {
   local title="$1"; shift
-  local -a opts=("$@")
-  local back_gap=0
-  local last_idx=-1
-
-  if [ "${#opts[@]}" -gt 0 ]; then
-    last_idx=$(( ${#opts[@]} - 1 ))
-    if [ "${opts[$last_idx]}" = "Back" ]; then
-      if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        back_gap=1
-      fi
-    fi
-  fi
-
   if has_gum; then
     local h=18
     local lines=""
@@ -2524,8 +2423,15 @@ choose() {
       fi
     fi
 
-    local selected=""
-    selected="$(gum choose \
+    # Pin navigation hint to terminal bottom; hide gum's built-in help line.
+    if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
+      tput sc 1>&2 2>/dev/null || true
+      tput cup $((lines - 1)) 0 1>&2 2>/dev/null || true
+      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m' >&2
+      tput rc 1>&2 2>/dev/null || true
+    fi
+
+    gum choose \
       --header "$title" \
       --header.foreground 39 \
       --item.foreground 39 \
@@ -2533,27 +2439,15 @@ choose() {
       --selected.background 39 \
       --cursor.foreground 33 \
       --height "${h}" \
-      "${opts[@]}" || true)"
-    printf "%s\n" "$selected"
-    return 0
+      --no-show-help \
+      "$@"
   else
     echo "$title" >&2
     local i=1
-    local opt
-    for opt in "${opts[@]}"; do
-      if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
-        printf "\n" >&2
-      fi
-      echo "  $i) $opt" >&2
-      i=$((i+1))
-    done
-    local count="${#opts[@]}"
-    printf "Select [1-%d]: " "$count" >&2
+    for opt in "$@"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    printf "Select [1-%d]: " "$#" >&2
     local n; read -r n; n="${n:-1}"
-    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
-      n=1
-    fi
-    printf "%s\n" "${opts[$((n - 1))]}"
+    echo "${@:n:1}"
   fi
 }
 
@@ -2615,1333 +2509,6 @@ ok()   { printf "✓ %s\n" "$*"; }
 info() { printf "INFO %s\n" "$*"; }
 warn() { printf "WARN %s\n" "$*" >&2; }
 
-set_persistent_export() {
-  local key="$1"
-  local value="$2"
-  local file escaped
-  escaped="$(printf "%q" "$value")"
-
-  for file in "$HOME/.profile" "$HOME/.bashrc"; do
-    [ -f "$file" ] || touch "$file"
-    if grep -Eq "^[[:space:]]*export[[:space:]]+${key}=" "$file"; then
-      sed -i "s|^[[:space:]]*export[[:space:]]\\+${key}=.*$|export ${key}=${escaped}|g" "$file"
-    else
-      printf "\nexport %s=%s\n" "$key" "$escaped" >> "$file"
-    fi
-  done
-
-  export "${key}=${value}"
-}
-
-cstm_tickers_for_industry() {
-  case "$1" in
-    "Information Technology")
-      echo "AAPL, ACN, ADBE, AMD, AVGO, CSCO, IBM, INTC, INTU, MSFT, NVDA, ORCL, PLTR, QCOM, CRM, NOW, TXN"
-      ;;
-    "Health Care")
-      echo "ABBV, ABT, AMGN, BMY, CVS, DHR, LLY, GILD, ISRG, JNJ, MDT, MRK, PFE, TMO, UNH"
-      ;;
-    "Financials")
-      echo "AXP, AIG, BAC, BLK, BK, BRK-B, COF, C, SCHW, GS, JPM, MET, MS, USB, WFC"
-      ;;
-    "Consumer Discretionary")
-      echo "AMZN, BKNG, GM, HD, LOW, MCD, NKE, SBUX, TGT, TSLA"
-      ;;
-    "Industrials")
-      echo "BA, CAT, DE, EMR, FDX, GD, GE, HON, LMT, RTX, UNP, UPS"
-      ;;
-    "Consumer Staples")
-      echo "MO, KO, CL, COST, MDLZ, PEP, PM, PG, WMT"
-      ;;
-    "Energy")
-      echo "CVX, COP, XOM"
-      ;;
-    "Materials")
-      echo "LIN, MMM"
-      ;;
-    "Utilities")
-      echo "DUK, NEE, SO"
-      ;;
-    "Real Estate")
-      echo "AMT, SPG"
-      ;;
-    "No preference"|*)
-      echo "AAPL, ACN, ADBE, AMD, AVGO, CSCO, IBM, INTC, INTU, MSFT, NVDA, ORCL, PLTR, QCOM, CRM, NOW, TXN, ABBV, ABT, AMGN, BMY, CVS, DHR, LLY, GILD, ISRG, JNJ, MDT, MRK, PFE, TMO, UNH, AXP, AIG, BAC, BLK, BK, BRK-B, COF, C, SCHW, GS, JPM, MET, MS, USB, WFC, AMZN, BKNG, GM, HD, LOW, MCD, NKE, SBUX, TGT, TSLA, GOOGL, GOOG, T, CMCSA, META, NFLX, TMUS, VZ, DIS, BA, CAT, DE, EMR, FDX, GD, GE, HON, LMT, RTX, UNP, UPS, MO, KO, CL, COST, MDLZ, PEP, PM, PG, WMT, CVX, COP, XOM, LIN, MMM, DUK, NEE, SO, AMT, SPG"
-      ;;
-  esac
-}
-
-cstm_wrap_text() {
-  python3 - "$1" <<'PY'
-import sys
-from textwrap import fill
-text = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
-if not text:
-    print("")
-else:
-    print(fill(text, width=64))
-PY
-}
-
-write_embedded_engine_builder_core() {
-  cat > "$HOME/engine_builder_core.py" <<'PYCORE'
-#!/usr/bin/env python3
-"""Core portfolio optimization + backtest utilities for ALGORA1 engine builder."""
-
-from __future__ import annotations
-
-import math
-import os
-import re
-from datetime import datetime, timedelta, timezone
-from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
-import numpy as np
-import pandas as pd
-
-
-SECTOR_UNIVERSE: Dict[str, List[str]] = {
-    "Information Technology": [
-        "AAPL",
-        "ACN",
-        "ADBE",
-        "AMD",
-        "AVGO",
-        "CSCO",
-        "IBM",
-        "INTC",
-        "INTU",
-        "MSFT",
-        "NVDA",
-        "ORCL",
-        "PLTR",
-        "QCOM",
-        "CRM",
-        "NOW",
-        "TXN",
-    ],
-    "Health Care": [
-        "ABBV",
-        "ABT",
-        "AMGN",
-        "BMY",
-        "CVS",
-        "DHR",
-        "LLY",
-        "GILD",
-        "ISRG",
-        "JNJ",
-        "MDT",
-        "MRK",
-        "PFE",
-        "TMO",
-        "UNH",
-    ],
-    "Financials": [
-        "AXP",
-        "AIG",
-        "BAC",
-        "BLK",
-        "BK",
-        "BRK-B",
-        "COF",
-        "C",
-        "SCHW",
-        "GS",
-        "JPM",
-        "MET",
-        "MS",
-        "USB",
-        "WFC",
-    ],
-    "Consumer Discretionary": [
-        "AMZN",
-        "BKNG",
-        "GM",
-        "HD",
-        "LOW",
-        "MCD",
-        "NKE",
-        "SBUX",
-        "TGT",
-        "TSLA",
-    ],
-    "Communication Services": [
-        "GOOGL",
-        "GOOG",
-        "T",
-        "CMCSA",
-        "META",
-        "NFLX",
-        "TMUS",
-        "VZ",
-        "DIS",
-    ],
-    "Industrials": [
-        "BA",
-        "CAT",
-        "DE",
-        "EMR",
-        "FDX",
-        "GD",
-        "GE",
-        "HON",
-        "LMT",
-        "RTX",
-        "UNP",
-        "UPS",
-    ],
-    "Consumer Staples": [
-        "MO",
-        "KO",
-        "CL",
-        "COST",
-        "MDLZ",
-        "PEP",
-        "PM",
-        "PG",
-        "WMT",
-    ],
-    "Energy": ["CVX", "COP", "XOM"],
-    "Materials": ["LIN", "MMM"],
-    "Utilities": ["DUK", "NEE", "SO"],
-    "Real Estate": ["AMT", "SPG"],
-}
-
-NO_PREFERENCE = "No preference"
-ALL_SECTORS = list(SECTOR_UNIVERSE.keys())
-
-OBJECTIVE_GROWTH = "GROWTH"
-OBJECTIVE_STABILITY = "STABILITY"
-OBJECTIVE_EFFICIENCY = "EFFICIENCY"
-VALID_OBJECTIVES = [OBJECTIVE_GROWTH, OBJECTIVE_STABILITY, OBJECTIVE_EFFICIENCY]
-
-DEFAULT_ENTRY_RULE = "close > sma50 and sma10 > sma20 and not (close < sma20 or open < sma20)"
-DEFAULT_EXIT_RULE = "close < sma20 or sma10 < sma20"
-
-
-@dataclass
-class StrategySpec:
-    entry_rule: str
-    exit_rule: str
-    stop_loss_pct: float = -6.0
-
-
-@dataclass
-class Metrics:
-    cagr: float
-    total_return: float
-    max_drawdown: float
-    calmar: float
-    annualized_volatility: float
-    sharpe: float
-    sortino: float
-    time_in_market: float
-    best_day: float
-    worst_day: float
-
-    def as_display(self) -> Dict[str, str]:
-        return {
-            "CAGR": f"{self.cagr * 100:.2f}%",
-            "Total Return": f"{self.total_return * 100:.2f}%",
-            "Max Drawdown": f"{self.max_drawdown * 100:.2f}%",
-            "Calmar (CAGR/|MaxDD|)": _fmt_num(self.calmar),
-            "Annualized Volatility": f"{self.annualized_volatility * 100:.2f}%",
-            "Sharpe (rf=0)": _fmt_num(self.sharpe),
-            "Sortino (rf=0)": _fmt_num(self.sortino),
-            "Time in Market": f"{self.time_in_market * 100:.2f}%",
-            "Best Day": f"{self.best_day * 100:.2f}%",
-            "Worst Day": f"{self.worst_day * 100:.2f}%",
-        }
-
-
-@dataclass
-class Candidate:
-    rank: int
-    score: float
-    objective: str
-    sectors: List[str]
-    tickers: List[str]
-    weights: Dict[str, float]
-    strategy: StrategySpec
-    metrics: Metrics
-    generated_at: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        out = asdict(self)
-        out["metrics_display"] = self.metrics.as_display()
-        return out
-
-
-_VALID_IDENTIFIERS = {
-    "open",
-    "high",
-    "low",
-    "close",
-    "sma10",
-    "sma20",
-    "sma50",
-    "sma200",
-    "and",
-    "or",
-    "not",
-    "True",
-    "False",
-}
-
-_DATA_CACHE: Dict[Tuple[str, int], pd.DataFrame] = {}
-_ALPACA_DATA_CLIENT = None
-_ALPACA_CLIENT_ERROR: Optional[str] = None
-
-
-def _fmt_num(v: float) -> str:
-    if pd.isna(v):
-        return "n/a"
-    return f"{v:.2f}"
-
-
-def normalize_ticker(ticker: str) -> str:
-    t = ticker.strip().upper()
-    if t == "BRK.B":
-        return "BRK-B"
-    return t
-
-
-def _resolve_alpaca_credentials() -> Tuple[Optional[str], Optional[str]]:
-    pairs = (
-        ("ALPACA_PAPER_API_KEY", "ALPACA_PAPER_SECRET_KEY"),
-        ("ALPACA_LIVE_API_KEY", "ALPACA_LIVE_SECRET_KEY"),
-        ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY"),
-        ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"),
-    )
-    for key_name, secret_name in pairs:
-        key = os.getenv(key_name, "").strip()
-        secret = os.getenv(secret_name, "").strip()
-        if key and secret:
-            return key, secret
-    return None, None
-
-
-def _get_alpaca_data_client():
-    global _ALPACA_DATA_CLIENT, _ALPACA_CLIENT_ERROR
-    if _ALPACA_DATA_CLIENT is not None:
-        return _ALPACA_DATA_CLIENT
-    if _ALPACA_CLIENT_ERROR:
-        return None
-
-    key, secret = _resolve_alpaca_credentials()
-    if not key or not secret:
-        _ALPACA_CLIENT_ERROR = (
-            "Missing Alpaca credentials. Set ALPACA_PAPER_API_KEY/ALPACA_PAPER_SECRET_KEY "
-            "or ALPACA_LIVE_API_KEY/ALPACA_LIVE_SECRET_KEY."
-        )
-        return None
-
-    try:
-        from alpaca.data import StockHistoricalDataClient
-    except Exception as exc:
-        _ALPACA_CLIENT_ERROR = f"alpaca-py import failed: {exc}"
-        return None
-
-    try:
-        _ALPACA_DATA_CLIENT = StockHistoricalDataClient(key, secret)
-    except Exception as exc:
-        _ALPACA_CLIENT_ERROR = f"Could not initialize Alpaca data client: {exc}"
-        return None
-    return _ALPACA_DATA_CLIENT
-
-
-def _normalize_alpaca_bars_df(df: pd.DataFrame, ticker: str) -> Optional[pd.DataFrame]:
-    if df is None or df.empty:
-        return None
-
-    out = df.copy()
-    target = normalize_ticker(ticker)
-
-    if isinstance(out.index, pd.MultiIndex) and "symbol" in out.index.names:
-        symbols = out.index.get_level_values("symbol").astype(str).str.upper()
-        out = out[symbols == target]
-        if out.empty:
-            return None
-        out = out.droplevel("symbol")
-    elif "symbol" in out.columns:
-        symbols = out["symbol"].astype(str).str.upper()
-        out = out[symbols == target]
-        if out.empty:
-            return None
-        out = out.drop(columns=["symbol"], errors="ignore")
-
-    if not isinstance(out.index, pd.DatetimeIndex):
-        if "timestamp" in out.columns:
-            out = out.set_index("timestamp")
-        elif "time" in out.columns:
-            out = out.set_index("time")
-        elif "date" in out.columns:
-            out = out.set_index("date")
-        else:
-            return None
-
-    lower_cols = {str(c).lower(): c for c in out.columns}
-    needed = {}
-    for name in ("open", "high", "low", "close"):
-        col = lower_cols.get(name)
-        if col is None:
-            return None
-        needed[col] = name
-
-    out = out.rename(columns=needed)[["open", "high", "low", "close"]].copy()
-    idx = pd.to_datetime(out.index, errors="coerce", utc=True)
-    out = out[~idx.isna()].copy()
-    if out.empty:
-        return None
-    idx = idx[~idx.isna()]
-    out.index = idx.tz_convert(None)
-    out = out[~out.index.duplicated(keep="last")].sort_index()
-    return out
-
-
-def selected_universe(industries: Iterable[str]) -> Tuple[List[str], List[str]]:
-    picks = [i.strip() for i in industries if i and i.strip()]
-    if not picks or NO_PREFERENCE in picks:
-        sectors = ALL_SECTORS[:]
-    else:
-        sectors = [s for s in ALL_SECTORS if s in picks]
-    tickers: List[str] = []
-    for sector in sectors:
-        tickers.extend(SECTOR_UNIVERSE[sector])
-    dedup = list(dict.fromkeys(normalize_ticker(t) for t in tickers))
-    return sectors, dedup
-
-
-def parse_rule_expr(expr: str) -> str:
-    if not expr or not expr.strip():
-        raise ValueError("Rule cannot be empty.")
-    norm = expr.strip()
-    norm = re.sub(r"\bAND\b", "and", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bOR\b", "or", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bNOT\b", "not", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"(?<![=!<>])!(?!=)", " not ", norm)
-    norm = re.sub(r"\bSMA10\b", "sma10", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bSMA20\b", "sma20", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bSMA50\b", "sma50", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bSMA200\b", "sma200", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bOPEN\b", "open", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bHIGH\b", "high", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bLOW\b", "low", norm, flags=re.IGNORECASE)
-    norm = re.sub(r"\bCLOSE\b", "close", norm, flags=re.IGNORECASE)
-
-    if "__" in norm or "[" in norm or "]" in norm or "{" in norm or "}" in norm:
-        raise ValueError("Rule contains unsupported characters.")
-
-    if not re.fullmatch(r"[A-Za-z0-9_().<>=!&|+\-*/ \t]+", norm):
-        raise ValueError("Rule has invalid tokens.")
-
-    ids = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", norm))
-    bad = [x for x in ids if x not in _VALID_IDENTIFIERS]
-    if bad:
-        raise ValueError(f"Unsupported fields/keywords in rule: {', '.join(sorted(bad))}")
-    return norm
-
-
-def validate_strategy(strategy: StrategySpec) -> StrategySpec:
-    return StrategySpec(
-        entry_rule=parse_rule_expr(strategy.entry_rule),
-        exit_rule=parse_rule_expr(strategy.exit_rule),
-        stop_loss_pct=float(strategy.stop_loss_pct),
-    )
-
-
-def parse_chat_prompt(prompt: str) -> Dict[str, Any]:
-    text = (prompt or "").strip()
-    low = text.lower()
-
-    mode = "paper"
-    if re.search(r"\blive\b", low):
-        mode = "live"
-    elif re.search(r"\bpaper\b", low):
-        mode = "paper"
-
-    objective = OBJECTIVE_GROWTH
-    if re.search(r"stability|lowest risk|smoother|low risk", low):
-        objective = OBJECTIVE_STABILITY
-    elif re.search(r"efficiency|risk[- ]adjusted|sharpe|sortino|calmar", low):
-        objective = OBJECTIVE_EFFICIENCY
-    elif re.search(r"growth|highest return|cagr|total return", low):
-        objective = OBJECTIVE_GROWTH
-
-    industries: List[str] = []
-    for sector in ALL_SECTORS:
-        if sector.lower() in low:
-            industries.append(sector)
-    if not industries and (re.search(r"no preference|any sector|all sector", low) or not text):
-        industries = [NO_PREFERENCE]
-
-    entry_rule = DEFAULT_ENTRY_RULE
-    exit_rule = DEFAULT_EXIT_RULE
-
-    buy_match = re.search(r"(?:buy|entry)\s+(?:when|if)\s+(.+?)(?:;|,|\n|$)", text, flags=re.IGNORECASE)
-    sell_match = re.search(r"(?:sell|exit)\s+(?:when|if)\s+(.+?)(?:;|,|\n|$)", text, flags=re.IGNORECASE)
-    if buy_match:
-        entry_rule = buy_match.group(1).strip()
-    if sell_match:
-        exit_rule = sell_match.group(1).strip()
-
-    return {
-        "mode": mode,
-        "objective": objective,
-        "industries": industries or [NO_PREFERENCE],
-        "strategy": StrategySpec(entry_rule=entry_rule, exit_rule=exit_rule, stop_loss_pct=-6.0),
-    }
-
-
-def fetch_ohlc(ticker: str, years: int = 10) -> Optional[pd.DataFrame]:
-    key = (ticker, years)
-    if key in _DATA_CACHE:
-        return _DATA_CACHE[key].copy()
-
-    client = _get_alpaca_data_client()
-    if client is None:
-        return None
-
-    try:
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame
-    except Exception as exc:
-        global _ALPACA_CLIENT_ERROR
-        _ALPACA_CLIENT_ERROR = f"alpaca-py request classes unavailable: {exc}"
-        return None
-
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=max(int(years * 366), 365))
-
-    req = StockBarsRequest(
-        symbol_or_symbols=normalize_ticker(ticker),
-        timeframe=TimeFrame.Day,
-        start=start,
-        end=end,
-        adjustment="all",
-        feed="iex",
-    )
-
-    try:
-        bars = client.get_stock_bars(req)
-    except Exception as exc:
-        _ALPACA_CLIENT_ERROR = f"Alpaca bars fetch failed for {ticker}: {exc}"
-        return None
-
-    df = _normalize_alpaca_bars_df(getattr(bars, "df", None), ticker)
-    if df is None or df.empty:
-        return None
-
-    _DATA_CACHE[key] = df.copy()
-    return df
-
-
-def _build_indicator_frame(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out["sma10"] = out["close"].rolling(10).mean()
-    out["sma20"] = out["close"].rolling(20).mean()
-    out["sma50"] = out["close"].rolling(50).mean()
-    out["sma200"] = out["close"].rolling(200).mean()
-    out = out.dropna(subset=["sma50"]).copy()
-    return out
-
-
-def _eval_rule(rule: str, df: pd.DataFrame) -> pd.Series:
-    code = parse_rule_expr(rule)
-    ctx = {
-        "open": df["open"],
-        "high": df["high"],
-        "low": df["low"],
-        "close": df["close"],
-        "sma10": df["sma10"],
-        "sma20": df["sma20"],
-        "sma50": df["sma50"],
-        "sma200": df["sma200"],
-    }
-    try:
-        out = eval(code, {"__builtins__": {}}, ctx)
-    except Exception as exc:
-        raise ValueError(f"Could not evaluate rule '{rule}': {exc}") from exc
-    if isinstance(out, (bool, np.bool_)):
-        return pd.Series([bool(out)] * len(df), index=df.index)
-    if not isinstance(out, pd.Series):
-        raise ValueError(f"Rule '{rule}' did not evaluate to a boolean series.")
-    return out.fillna(False).astype(bool)
-
-
-def perf_metrics_from_nav(nav_df: pd.DataFrame) -> Metrics:
-    if nav_df is None or nav_df.empty:
-        return Metrics(
-            cagr=np.nan,
-            total_return=np.nan,
-            max_drawdown=np.nan,
-            calmar=np.nan,
-            annualized_volatility=np.nan,
-            sharpe=np.nan,
-            sortino=np.nan,
-            time_in_market=np.nan,
-            best_day=np.nan,
-            worst_day=np.nan,
-        )
-
-    r = nav_df["daily_ret"].astype(float)
-    eq = nav_df["equity"].astype(float)
-    days = max((nav_df.index[-1] - nav_df.index[0]).days, 1)
-    years = days / 365.25
-
-    cagr = (eq.iloc[-1] / eq.iloc[0]) ** (1.0 / max(years, 1e-9)) - 1.0
-    total_return = (eq.iloc[-1] / eq.iloc[0]) - 1.0
-    vol = r.std(ddof=0) * math.sqrt(252)
-    mean = r.mean() * 252
-    sharpe = (mean / vol) if vol > 0 else np.nan
-
-    downside = r[r < 0]
-    downside_vol = downside.std(ddof=0) * math.sqrt(252)
-    sortino = (mean / downside_vol) if downside_vol > 0 else np.nan
-
-    peak = eq.cummax()
-    dd = (eq / peak) - 1.0
-    max_dd = float(dd.min()) if len(dd) else np.nan
-    calmar = (cagr / abs(max_dd)) if (not pd.isna(max_dd) and max_dd < 0) else np.nan
-    time_in_market = float(nav_df["in_market"].mean()) if "in_market" in nav_df.columns else np.nan
-    best_day = float(r.max()) if len(r) else np.nan
-    worst_day = float(r.min()) if len(r) else np.nan
-
-    return Metrics(
-        cagr=float(cagr),
-        total_return=float(total_return),
-        max_drawdown=float(max_dd),
-        calmar=float(calmar) if not pd.isna(calmar) else np.nan,
-        annualized_volatility=float(vol),
-        sharpe=float(sharpe) if not pd.isna(sharpe) else np.nan,
-        sortino=float(sortino) if not pd.isna(sortino) else np.nan,
-        time_in_market=float(time_in_market),
-        best_day=float(best_day),
-        worst_day=float(worst_day),
-    )
-
-
-def score_metrics(metrics: Metrics, objective: str) -> float:
-    if objective == OBJECTIVE_STABILITY:
-        return (
-            -abs(metrics.max_drawdown if not pd.isna(metrics.max_drawdown) else -1.0)
-            - (metrics.annualized_volatility if not pd.isna(metrics.annualized_volatility) else 1.0)
-            + 0.25 * (metrics.cagr if not pd.isna(metrics.cagr) else -1.0)
-        )
-    if objective == OBJECTIVE_EFFICIENCY:
-        return (
-            (metrics.sharpe if not pd.isna(metrics.sharpe) else -10.0)
-            + (metrics.sortino if not pd.isna(metrics.sortino) else -10.0)
-            + (metrics.calmar if not pd.isna(metrics.calmar) else -10.0)
-            + 0.1 * (metrics.cagr if not pd.isna(metrics.cagr) else -1.0)
-        )
-    # Growth default
-    return (
-        1.2 * (metrics.cagr if not pd.isna(metrics.cagr) else -1.0)
-        + 0.8 * (metrics.total_return if not pd.isna(metrics.total_return) else -1.0)
-        - 0.25 * abs(metrics.max_drawdown if not pd.isna(metrics.max_drawdown) else -1.0)
-        - 0.1 * (metrics.annualized_volatility if not pd.isna(metrics.annualized_volatility) else 1.0)
-    )
-
-
-def run_ticker_strategy(
-    ticker: str,
-    strategy: StrategySpec,
-    years: int = 10,
-    start_equity: float = 10000.0,
-) -> Optional[Dict[str, Any]]:
-    raw = fetch_ohlc(ticker, years=years)
-    if raw is None or raw.empty:
-        return None
-
-    df = _build_indicator_frame(raw)
-    if len(df) < 220:
-        return None
-
-    entry = _eval_rule(strategy.entry_rule, df)
-    exit_rule = _eval_rule(strategy.exit_rule, df)
-
-    holding = False
-    shares = 0.0
-    entry_price = 0.0
-    stop_price = 0.0
-    buy_dt = None
-    equity = float(start_equity)
-
-    equity_series: List[float] = []
-    in_mkt_series: List[bool] = []
-    trade_rows: List[Dict[str, Any]] = []
-    dates = df.index
-
-    for i in range(1, len(df)):
-        dt = dates[i]
-        close_price = float(df["close"].iloc[i])
-        low_price = float(df["low"].iloc[i])
-        ent = bool(entry.iloc[i])
-        ent_prev = bool(entry.iloc[i - 1])
-        ex = bool(exit_rule.iloc[i])
-        ex_prev = bool(exit_rule.iloc[i - 1])
-
-        if not holding:
-            if ent and not ent_prev:
-                holding = True
-                entry_price = close_price
-                buy_dt = dt
-                stop_price = entry_price * (1.0 + strategy.stop_loss_pct / 100.0)
-                shares = equity / entry_price if entry_price > 0 else 0.0
-            equity_series.append(equity)
-            in_mkt_series.append(False)
-            continue
-
-        if low_price <= stop_price:
-            exit_price = stop_price
-            equity = shares * exit_price
-            trade_rows.append(
-                {
-                    "ticker": ticker,
-                    "buy_date": buy_dt,
-                    "sell_date": dt,
-                    "buy_price": entry_price,
-                    "sell_price": exit_price,
-                    "return": (exit_price / entry_price) - 1.0,
-                    "exit_type": "STOP_LOSS",
-                }
-            )
-            holding = False
-            shares = 0.0
-            entry_price = 0.0
-            stop_price = 0.0
-            buy_dt = None
-            equity_series.append(equity)
-            in_mkt_series.append(True)
-            continue
-
-        if ex and not ex_prev:
-            exit_price = close_price
-            equity = shares * exit_price
-            trade_rows.append(
-                {
-                    "ticker": ticker,
-                    "buy_date": buy_dt,
-                    "sell_date": dt,
-                    "buy_price": entry_price,
-                    "sell_price": exit_price,
-                    "return": (exit_price / entry_price) - 1.0,
-                    "exit_type": "SIGNAL",
-                }
-            )
-            holding = False
-            shares = 0.0
-            entry_price = 0.0
-            stop_price = 0.0
-            buy_dt = None
-            equity_series.append(equity)
-            in_mkt_series.append(True)
-            continue
-
-        equity_series.append(shares * close_price)
-        in_mkt_series.append(True)
-
-    nav = pd.DataFrame(
-        {"equity": equity_series, "in_market": in_mkt_series},
-        index=dates[1:],
-    )
-    nav["daily_ret"] = nav["equity"].pct_change().fillna(0.0)
-    metrics = perf_metrics_from_nav(nav)
-    return {"ticker": ticker, "nav": nav, "metrics": metrics, "trades": trade_rows}
-
-
-def _portfolio_nav(
-    ticker_results: Dict[str, Dict[str, Any]],
-    tickers: List[str],
-    weights: Optional[Dict[str, float]] = None,
-    start_equity: float = 10000.0,
-) -> pd.DataFrame:
-    if not tickers:
-        return pd.DataFrame(columns=["equity", "daily_ret", "in_market"])
-
-    if weights is None:
-        w = 1.0 / len(tickers)
-        weights = {t: w for t in tickers}
-
-    merged: Optional[pd.DataFrame] = None
-    for t in tickers:
-        nav = ticker_results[t]["nav"][["daily_ret", "in_market"]].copy()
-        nav = nav.rename(columns={"daily_ret": f"r_{t}", "in_market": f"m_{t}"})
-        if merged is None:
-            merged = nav
-        else:
-            merged = merged.join(nav, how="outer")
-    assert merged is not None
-    merged = merged.fillna(0.0).sort_index()
-
-    ret_cols = [f"r_{t}" for t in tickers]
-    merged["daily_ret"] = 0.0
-    for t in tickers:
-        merged["daily_ret"] += merged[f"r_{t}"] * float(weights[t])
-
-    merged["equity"] = (1.0 + merged["daily_ret"]).cumprod() * start_equity
-    m_cols = [f"m_{t}" for t in tickers]
-    merged["in_market"] = merged[m_cols].astype(bool).any(axis=1).astype(float)
-    return merged[["equity", "daily_ret", "in_market"]]
-
-
-def optimize_top_candidates(
-    industries: Iterable[str],
-    objective: str,
-    strategy: StrategySpec,
-    years: int = 10,
-    max_tickers: int = 6,
-    prefilter_count: int = 14,
-    top_n: int = 3,
-) -> List[Candidate]:
-    if objective not in VALID_OBJECTIVES:
-        raise ValueError(f"Unsupported objective '{objective}'.")
-    client = _get_alpaca_data_client()
-    if client is None:
-        raise RuntimeError(_ALPACA_CLIENT_ERROR or "Could not initialize Alpaca data client.")
-    strategy = validate_strategy(strategy)
-    sectors, universe = selected_universe(industries)
-    if not universe:
-        return []
-
-    ticker_results: Dict[str, Dict[str, Any]] = {}
-    singles: List[Tuple[str, float]] = []
-    for t in universe:
-        result = run_ticker_strategy(t, strategy=strategy, years=years)
-        if result is None:
-            continue
-        ticker_results[t] = result
-        singles.append((t, score_metrics(result["metrics"], objective)))
-
-    if not singles:
-        if _ALPACA_CLIENT_ERROR:
-            raise RuntimeError(_ALPACA_CLIENT_ERROR)
-        return []
-
-    singles.sort(key=lambda x: x[1], reverse=True)
-    prefiltered = [t for t, _ in singles[:prefilter_count]]
-    seed_count = min(5, len(prefiltered))
-
-    scored_combo: Dict[Tuple[str, ...], Tuple[float, Metrics, Dict[str, float]]] = {}
-
-    def evaluate_combo(combo: List[str]) -> Tuple[float, Metrics, Dict[str, float]]:
-        w = 1.0 / len(combo)
-        weights = {t: w for t in combo}
-        nav = _portfolio_nav(ticker_results, combo, weights=weights)
-        metrics = perf_metrics_from_nav(nav)
-        score = score_metrics(metrics, objective)
-        return score, metrics, weights
-
-    for seed in prefiltered[:seed_count]:
-        combo = [seed]
-        score, metrics, weights = evaluate_combo(combo)
-        scored_combo[tuple(sorted(combo))] = (score, metrics, weights)
-
-        while len(combo) < max_tickers:
-            best_add: Optional[str] = None
-            best_pack: Optional[Tuple[float, Metrics, Dict[str, float]]] = None
-
-            for t in prefiltered:
-                if t in combo:
-                    continue
-                test = combo + [t]
-                pack = evaluate_combo(test)
-                if best_pack is None or pack[0] > best_pack[0]:
-                    best_add = t
-                    best_pack = pack
-
-            if best_add is None or best_pack is None:
-                break
-
-            if best_pack[0] <= score + 1e-9:
-                break
-
-            combo.append(best_add)
-            score, metrics, weights = best_pack
-            scored_combo[tuple(sorted(combo))] = (score, metrics, weights)
-
-    ranked = sorted(scored_combo.items(), key=lambda item: item[1][0], reverse=True)[:top_n]
-    ts = pd.Timestamp.utcnow().tz_localize("UTC").isoformat()
-    out: List[Candidate] = []
-    for idx, (combo_key, pack) in enumerate(ranked, start=1):
-        combo = list(combo_key)
-        score, metrics, weights = pack
-        out.append(
-            Candidate(
-                rank=idx,
-                score=float(score),
-                objective=objective,
-                sectors=sectors,
-                tickers=combo,
-                weights={k: float(v) for k, v in weights.items()},
-                strategy=strategy,
-                metrics=metrics,
-                generated_at=ts,
-            )
-        )
-    return out
-
-
-def candidate_to_engine_config(
-    candidate: Candidate,
-    engine_name: str,
-    account_mode: str,
-) -> Dict[str, Any]:
-    clean = re.sub(r"[^A-Za-z0-9_-]+", "", engine_name.strip())
-    if not clean:
-        clean = "engine"
-    slug = clean.lower()
-    return {
-        "engine_name": clean,
-        "engine_slug": slug,
-        "mode": account_mode.lower(),
-        "objective": candidate.objective,
-        "industries": candidate.sectors,
-        "tickers": candidate.tickers,
-        "weights": candidate.weights,
-        "strategy": {
-            "entry_rule": candidate.strategy.entry_rule,
-            "exit_rule": candidate.strategy.exit_rule,
-            "stop_loss_pct": float(candidate.strategy.stop_loss_pct),
-        },
-        "stop_loss_pct": {
-            t: float(abs(candidate.strategy.stop_loss_pct)) for t in candidate.tickers
-        },
-        "created_at": pd.Timestamp.utcnow().tz_localize("UTC").isoformat(),
-        "metrics_snapshot": candidate.metrics.as_display(),
-    }
-
-
-def nav_and_trades_for_candidate(
-    candidate: Candidate,
-    years: int = 10,
-    start_equity: float = 10000.0,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    strategy = candidate.strategy
-    results: Dict[str, Dict[str, Any]] = {}
-    all_trades: List[Dict[str, Any]] = []
-    for t in candidate.tickers:
-        r = run_ticker_strategy(t, strategy=strategy, years=years, start_equity=start_equity)
-        if r is None:
-            continue
-        results[t] = r
-        all_trades.extend(r["trades"])
-    if not results:
-        return (
-            pd.DataFrame(columns=["equity", "daily_ret", "in_market"]),
-            pd.DataFrame(),
-        )
-    nav = _portfolio_nav(results, candidate.tickers, candidate.weights, start_equity=start_equity)
-    trades = pd.DataFrame(all_trades)
-    if not trades.empty:
-        trades = trades.sort_values("sell_date").reset_index(drop=True)
-    return nav, trades
-
-
-def default_strategy() -> StrategySpec:
-    return StrategySpec(
-        entry_rule=DEFAULT_ENTRY_RULE,
-        exit_rule=DEFAULT_EXIT_RULE,
-        stop_loss_pct=-6.0,
-    )
-PYCORE
-  chmod 644 "$HOME/engine_builder_core.py" >/dev/null 2>&1 || true
-}
-
-CSTM_SETUP_ERR=""
-
-ensure_cstm_builder_ready() {
-  CSTM_SETUP_ERR=""
-
-  if [ ! -f "$HOME/engine_builder_core.py" ]; then
-    info "Installing embedded engine_builder_core.py..."
-    write_embedded_engine_builder_core || {
-      CSTM_SETUP_ERR="Could not write ~/engine_builder_core.py from embedded payload."
-      warn "$CSTM_SETUP_ERR"
-      return 1
-    }
-  fi
-
-  local dep_check=""
-  dep_check="$(python3 - <<'PY'
-import importlib
-for m in ("numpy", "pandas", "alpaca"):
-    try:
-        importlib.import_module(m)
-    except Exception as exc:
-        print(f"{m}: {exc}")
-        break
-else:
-    print("ok")
-PY
-)"
-  dep_check="${dep_check//$'\n'/ }"
-  if [ "$dep_check" = "ok" ]; then
-    return 0
-  fi
-
-  info "Installing optimizer dependencies (numpy/pandas/alpaca-py)…"
-
-  if ! python3 -m pip --version >/dev/null 2>&1; then
-    python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
-  fi
-
-  if ! python3 -m pip install --user --quiet numpy pandas alpaca-py >/dev/null 2>&1; then
-    if ! python3 -m pip install --user --quiet --break-system-packages numpy pandas alpaca-py >/dev/null 2>&1; then
-      CSTM_SETUP_ERR="Dependency install failed. Check VM internet/DNS and Python pip availability."
-      warn "$CSTM_SETUP_ERR"
-      return 1
-    fi
-  fi
-
-  dep_check="$(python3 - <<'PY'
-import importlib
-for m in ("numpy", "pandas", "alpaca"):
-    try:
-        importlib.import_module(m)
-    except Exception as exc:
-        print(f"{m}: {exc}")
-        break
-else:
-    print("ok")
-PY
-)"
-  dep_check="${dep_check//$'\n'/ }"
-  if [ "$dep_check" != "ok" ]; then
-    CSTM_SETUP_ERR="Dependencies still unavailable after install (${dep_check})."
-    warn "$CSTM_SETUP_ERR"
-    return 1
-  fi
-
-  return 0
-}
-
-run_cstm_optimizer_json() {
-  local industry="$1"
-  local objective="$2"
-
-  python3 - "$industry" "$objective" <<'PY'
-import json
-import os
-import sys
-
-industry = sys.argv[1]
-objective = sys.argv[2]
-sys.path.insert(0, os.path.expanduser("~"))
-
-try:
-    import engine_builder_core as core
-except Exception as exc:
-    print(json.dumps({"ok": False, "error": f"Could not import engine_builder_core: {exc}"}))
-    raise SystemExit(0)
-
-sector_universe = {
-    "Information Technology": ["AAPL", "ACN", "ADBE", "AMD", "AVGO", "CSCO", "IBM", "INTC", "INTU", "MSFT", "NVDA", "ORCL", "PLTR", "QCOM", "CRM", "NOW", "TXN"],
-    "Health Care": ["ABBV", "ABT", "AMGN", "BMY", "CVS", "DHR", "LLY", "GILD", "ISRG", "JNJ", "MDT", "MRK", "PFE", "TMO", "UNH"],
-    "Financials": ["AXP", "AIG", "BAC", "BLK", "BK", "BRK-B", "COF", "C", "SCHW", "GS", "JPM", "MET", "MS", "USB", "WFC"],
-    "Consumer Discretionary": ["AMZN", "BKNG", "GM", "HD", "LOW", "MCD", "NKE", "SBUX", "TGT", "TSLA"],
-    "Communication Services": ["GOOGL", "GOOG", "T", "CMCSA", "META", "NFLX", "TMUS", "VZ", "DIS"],
-    "Industrials": ["BA", "CAT", "DE", "EMR", "FDX", "GD", "GE", "HON", "LMT", "RTX", "UNP", "UPS"],
-    "Consumer Staples": ["MO", "KO", "CL", "COST", "MDLZ", "PEP", "PM", "PG", "WMT"],
-    "Energy": ["CVX", "COP", "XOM"],
-    "Materials": ["LIN", "MMM"],
-    "Utilities": ["DUK", "NEE", "SO"],
-    "Real Estate": ["AMT", "SPG"],
-}
-
-core.SECTOR_UNIVERSE = sector_universe
-core.ALL_SECTORS = list(sector_universe.keys())
-core.NO_PREFERENCE = "No preference"
-
-try:
-    industries = [core.NO_PREFERENCE] if industry == core.NO_PREFERENCE else [industry]
-    strategy = core.StrategySpec(
-        entry_rule="close > sma50 and sma10 > sma20 and not (close < sma20 or open < sma20)",
-        exit_rule="close < sma20 or sma10 < sma20",
-        stop_loss_pct=-6.0,
-    )
-    sectors, tickers = core.selected_universe(industries)
-    candidates = core.optimize_top_candidates(
-        industries=industries,
-        objective=objective,
-        strategy=strategy,
-        years=10,
-        max_tickers=6,
-        prefilter_count=14,
-        top_n=3,
-    )
-    if not candidates:
-        print(json.dumps({"ok": False, "error": "No valid candidates found for this industry/objective.", "tickers": tickers}))
-        raise SystemExit(0)
-
-    out = []
-    for c in candidates:
-        out.append({
-            "rank": c.rank,
-            "tickers": c.tickers,
-            "weights": c.weights,
-            "metrics": c.metrics.as_display(),
-            "objective": c.objective,
-        })
-
-    print(json.dumps({
-        "ok": True,
-        "industry": industry,
-        "sectors": sectors,
-        "tickers": tickers,
-        "objective": objective,
-        "candidates": out,
-    }))
-except Exception as exc:
-    print(json.dumps({"ok": False, "error": f"Optimization failed: {exc}"}))
-PY
-}
-
-build_cstm_candidate_labels() {
-  local payload="$1"
-  local objective="$2"
-  python3 - "$payload" "$objective" <<'PY'
-import json
-import sys
-
-data = json.loads(sys.argv[1])
-objective = sys.argv[2]
-
-if objective == "STABILITY":
-    keys = ("Max Drawdown", "Annualized Volatility")
-elif objective == "EFFICIENCY":
-    keys = ("Sharpe (rf=0)", "Sortino (rf=0)")
-else:
-    keys = ("CAGR", "Total Return")
-
-for cand in data.get("candidates", []):
-    metrics = cand.get("metrics", {})
-    metric_line = " | ".join(f"{k}: {metrics.get(k, 'n/a')}" for k in keys)
-    tickers = ",".join(cand.get("tickers", []))
-    print(f"{cand.get('rank', '?')}) {tickers} | {metric_line}")
-PY
-}
-
-cstm_candidate_by_rank() {
-  local payload="$1"
-  local rank="$2"
-  python3 - "$payload" "$rank" <<'PY'
-import json
-import sys
-
-data = json.loads(sys.argv[1])
-rank = str(sys.argv[2]).strip()
-for cand in data.get("candidates", []):
-    if str(cand.get("rank")) == rank:
-        print(json.dumps(cand))
-        break
-PY
-}
-
-cstm_run_now_if_possible() {
-  local cnt
-  cnt="$(session_count)"
-  if [ "$cnt" != "0" ]; then
-    warn "A session already exists. Connect to it and select CSTM from the engine list."
-    return 0
-  fi
-
-  local name="investing"
-  create_new_session "$name" "CSTM"
-
-  hard_clear
-  ui_view_mode_on
-  screen -r "$name" || true
-  ui_view_mode_off
-  hard_clear
-  return 0
-}
-
-create_engine_menu() {
-  command -v python3 >/dev/null 2>&1 || { warn "python3 is required for Create Engine."; return 0; }
-
-  local industry=""
-  while true; do
-    industry="$(choose "Create Engine - Select Industry" \
-      "Information Technology" \
-      "Health Care" \
-      "Financials" \
-      "Consumer Discretionary" \
-      "Industrials" \
-      "Consumer Staples" \
-      "Energy" \
-      "Materials" \
-      "Utilities" \
-      "Real Estate" \
-      "No preference" \
-      "Back")"
-    [ "$industry" != "Back" ] || return 0
-    [ -n "${industry//[[:space:]]/}" ] && break
-  done
-
-  local portfolio_choice objective
-  portfolio_choice="$(choose "Create Engine - Select Portfolio Type" \
-    "Highest return (GROWTH)" \
-    "Lowest risk / smoother ride (STABILITY)" \
-    "Best risk-adjusted return (EFFICIENCY)" \
-    "Back")"
-  case "$portfolio_choice" in
-    "Highest return (GROWTH)") objective="GROWTH" ;;
-    "Lowest risk / smoother ride (STABILITY)") objective="STABILITY" ;;
-    "Best risk-adjusted return (EFFICIENCY)") objective="EFFICIENCY" ;;
-    *) return 0 ;;
-  esac
-
-  local relevant raw_tickers
-  raw_tickers="$(cstm_tickers_for_industry "$industry")"
-  relevant="$(cstm_wrap_text "$raw_tickers")"
-
-  hard_clear
-  if has_gum; then
-    gum style --border rounded --padding "1 2" --border-foreground 39 \
-      "$(printf "Create Engine\nIndustry: %s\nPortfolio: %s\n\nRelevant tickers:\n%s" "$industry" "$objective" "$relevant")"
-  else
-    echo "Create Engine"
-    echo "Industry: $industry"
-    echo "Portfolio: $objective"
-    echo ""
-    echo "Relevant tickers:"
-    echo "$relevant"
-  fi
-  echo ""
-
-  if ! ensure_cstm_builder_ready; then
-    local setup_err
-    setup_err="${CSTM_SETUP_ERR:-Missing dependencies or ~/engine_builder_core.py.}"
-    hard_clear
-    center_box "$(printf "Create Engine setup failed.\n\n%s\n\nPress Enter to return to the menu." "$setup_err")"
-    ui_wait_enter_only
-    return 0
-  fi
-
-  info "Running optimization for ${objective}..."
-  local result_json
-  result_json="$(run_cstm_optimizer_json "$industry" "$objective" 2>/dev/null || true)"
-  if [ -z "${result_json//[[:space:]]/}" ]; then
-    hard_clear
-    center_box $'Create Engine failed before returning results.\n\nVerify network access and ~/engine_builder_core.py compatibility.\n\nPress Enter to return to the menu.'
-    ui_wait_enter_only
-    return 0
-  fi
-
-  local ok_flag
-  ok_flag="$(python3 - "$result_json" <<'PY'
-import json, sys
-try:
-    data = json.loads(sys.argv[1])
-    print("1" if data.get("ok") else "0")
-except Exception:
-    print("0")
-PY
-)"
-  if [ "$ok_flag" != "1" ]; then
-    local err
-    err="$(python3 - "$result_json" <<'PY'
-import json, sys
-try:
-    data = json.loads(sys.argv[1])
-    print(data.get("error", "Create Engine failed."))
-except Exception:
-    print("Create Engine failed.")
-PY
-)"
-    hard_clear
-    center_box "$(printf "Create Engine failed:\n\n%s\n\nPress Enter to return to the menu." "$err")"
-    ui_wait_enter_only
-    return 0
-  fi
-
-  local -a candidate_options=()
-  mapfile -t candidate_options < <(build_cstm_candidate_labels "$result_json" "$objective")
-  if [ "${#candidate_options[@]}" -eq 0 ]; then
-    hard_clear
-    center_box $'No portfolio options were produced.\n\nTry another industry or objective.\n\nPress Enter to return to the menu.'
-    ui_wait_enter_only
-    return 0
-  fi
-
-  local selected_option rank
-  selected_option="$(choose "Top 3 portfolio options (${objective})" "${candidate_options[@]}" "Back")"
-  [ -n "${selected_option//[[:space:]]/}" ] || return 0
-  [ "$selected_option" != "Back" ] || return 0
-  rank="${selected_option%%)*}"
-  [[ "$rank" =~ ^[0-9]+$ ]] || { warn "Invalid portfolio selection."; return 0; }
-
-  local candidate_json
-  candidate_json="$(cstm_candidate_by_rank "$result_json" "$rank")"
-  [ -n "$candidate_json" ] || { warn "Could not load selected portfolio."; return 0; }
-
-  local tickers_csv weights_json stop_json metrics_line
-  tickers_csv="$(python3 - "$candidate_json" <<'PY'
-import json, sys
-c = json.loads(sys.argv[1])
-print(",".join(c.get("tickers", [])))
-PY
-)"
-  weights_json="$(python3 - "$candidate_json" <<'PY'
-import json, sys
-c = json.loads(sys.argv[1])
-print(json.dumps(c.get("weights", {}), separators=(",", ":")))
-PY
-)"
-  stop_json="$(python3 - "$candidate_json" <<'PY'
-import json, sys
-c = json.loads(sys.argv[1])
-tickers = c.get("tickers", [])
-print(json.dumps({t: 6.0 for t in tickers}, separators=(",", ":")))
-PY
-)"
-  metrics_line="$(python3 - "$candidate_json" "$objective" <<'PY'
-import json, sys
-c = json.loads(sys.argv[1])
-metrics = c.get("metrics", {})
-objective = sys.argv[2]
-if objective == "STABILITY":
-    keys = ("Max Drawdown", "Annualized Volatility")
-elif objective == "EFFICIENCY":
-    keys = ("Sharpe (rf=0)", "Sortino (rf=0)", "Calmar (CAGR/|MaxDD|)")
-else:
-    keys = ("CAGR", "Total Return")
-print(" | ".join(f"{k}: {metrics.get(k, 'n/a')}" for k in keys))
-PY
-)"
-
-  local engine_name username
-  engine_name="$(input "Custom engine name (default: CSTM):")"
-  engine_name="${engine_name:-CSTM}"
-  engine_name="$(printf '%s' "$engine_name" | tr -cd '[:alnum:] _-')"
-  engine_name="${engine_name:-CSTM}"
-
-  username="$(input "Username:")"
-  username="${username:-unknown}"
-
-  set_persistent_export "CSTM_ENGINE_NAME" "$engine_name"
-  set_persistent_export "CSTM_USERNAME" "$username"
-  set_persistent_export "CSTM_INDUSTRY" "$industry"
-  set_persistent_export "CSTM_OBJECTIVE" "$objective"
-  set_persistent_export "CSTM_TICKERS" "$tickers_csv"
-  set_persistent_export "CSTM_WEIGHTS_JSON" "$weights_json"
-  set_persistent_export "CSTM_STOP_LOSS_PCT_JSON" "$stop_json"
-  set_persistent_export "CSTM_ACCOUNT_MODE" "paper"
-
-  ok "Custom engine saved as ${engine_name}."
-  info "Selected portfolio metrics -> ${metrics_line}"
-
-  local action
-  action="$(choose "Custom engine ready" "Run CSTM now" "Back")"
-  if [ "$action" = "Run CSTM now" ]; then
-    cstm_run_now_if_possible
-  fi
-}
-
 list_sessions_raw() {
   # screen -ls returns exit code 1 when there are no sockets; don't let set -e kill the menu
   command -v screen >/dev/null 2>&1 || return 0
@@ -3995,18 +2562,12 @@ connect_only_session() {
 
 create_new_session() {
   local name="$1"
-  local autorun_engine="${2:-}"
-  local cmd="cd \$HOME && export TERM=screen-256color"
-  if [ -n "$autorun_engine" ]; then
-    cmd="${cmd} && export ALGORA1_AUTORUN_ENGINE=${autorun_engine}"
-  fi
-  cmd="${cmd} && exec /usr/local/bin/algora1-session"
-  screen -S "$name" -dm bash -lc "$cmd"
+  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session"
 }
 
 engine_running_anywhere() {
-  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
-  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -4017,7 +2578,6 @@ log_for_engine() {
     TSLA) echo "tsla_investing.log" ;;
     NVDA) echo "nvda_investing.log" ;;
     PMNY) echo "pmny_investing.log" ;;
-    CSTM) echo "cstm_investing.log" ;;
     *) echo "pmny_investing.log" ;;
   esac
 }
@@ -4028,7 +2588,6 @@ live_status_for_engine() {
     TSLA) echo "tsla_live_status.txt" ;;
     NVDA) echo "nvda_live_status.txt" ;;
     PMNY) echo "pmny_live_status.txt" ;;
-    CSTM) echo "cstm_live_status.txt" ;;
     *) echo "pmny_live_status.txt" ;;
   esac
 }
@@ -4039,7 +2598,7 @@ detect_running_engine_best_effort() {
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY" || cmd=="CSTM") {
+      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY") {
         print cmd
         found=1
         exit 0
@@ -4227,30 +2786,7 @@ live_charts_menu() {
   fi
 
   local pick symbol
-  local -a cstm_opts=()
   case "$eng" in
-    CSTM)
-      [ -f "$HOME/.profile" ] && source "$HOME/.profile" >/dev/null 2>&1 || true
-      [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" >/dev/null 2>&1 || true
-      while IFS= read -r tk; do
-        [ -n "$tk" ] || continue
-        cstm_opts+=("$tk")
-      done < <(
-        printf '%s' "${CSTM_TICKERS:-TSLA,NVDA}" \
-          | tr ',' '\n' \
-          | sed 's/[[:space:]]//g' \
-          | tr '[:lower:]' '[:upper:]' \
-          | tr '.' '-' \
-          | sed '/^$/d' \
-          | awk '!seen[$0]++'
-      )
-      [ "${#cstm_opts[@]}" -gt 0 ] || cstm_opts=( "TSLA" "NVDA" )
-      pick="$(choose "Live Charts" "${cstm_opts[@]}" "Back")"
-      case "$pick" in
-        "Back"|"" ) return 0 ;;
-        * ) symbol="$pick" ;;
-      esac
-      ;;
     NVDA)
       pick="$(choose "Live Charts" "NVIDIA Corporation (NVDA)" "Back")"
       case "$pick" in
@@ -4368,7 +2904,6 @@ main_loop() {
     local selection
     selection="$(choose "Select an option" \
       "Running session" \
-      "Create Engine" \
       "Live Status" \
       "Live Charts" \
       "System Activity" \
@@ -4376,12 +2911,11 @@ main_loop() {
 
     case "$selection" in
       "Running session") running_sessions_menu ;;
-      "Create Engine") create_engine_menu ;;
       "Live Status") live_status_menu ;;
       "Live Charts") live_charts_menu ;;
       "System Activity") troubleshoot_menu ;;
       "Exit") exit 0 ;;
-      *) continue ;;
+      *) exit 0 ;;
     esac
   done
 }
@@ -4440,7 +2974,7 @@ install_plan_confirm() {
     "Project" "${PROJECT_ID}" \
     "Zone" "${ZONE}" \
     "Machine" "${MACHINE_TYPE}" \
-    "Engines" "BEXP, TSLA, NVDA, PMNY, CSTM"
+    "Engines" "BEXP, TSLA, NVDA, PMNY"
 
   local choice
   choice="$(ui_choose "Proceed?" "Continue" "Exit")"
