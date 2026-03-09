@@ -19,16 +19,16 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 # Set your custom artifact URLs here:
 # - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.exe")
 # - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
-CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_340b58123ebf4041880d044b63e07237.zip"
-ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5409a144c7d54ea48bb905c592bfd018.zip"
+CSTM_ZIP_URL="${CSTM_ZIP_URL:-}"
+ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ca112bb6a1942d0992b0a8b7ad96c8e.zip"
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_534e48b6946144c192de500e210d1dfa.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_abe762175c2846b8a7fc4a0710aca324.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5b6d79723f214f36b499bfc31749cd36.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_340b58123ebf4041880d044b63e07237.zip" ;;
-    CSTM) echo "${CSTM_ZIP_URL}" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0a379cb6e4ad491fb7635ddb7f4ca600.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3368c25ecd0c4afdadd14b2e0772a1f2.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_61050c7245a84fa886f405f2cb7d5682.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ffcd82e7c60e4c4dadd9fb4d90d95335.zip" ;;
+    CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -52,8 +52,6 @@ TSLA — Tesla engine with signal-based deployment and downside controls.
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
-
-CSTM — Custom dynamic engine built from selected industries/objective.
 
 EOT
 }
@@ -255,6 +253,17 @@ ui_spin() {
 
 ui_choose() {
   local title="$1"; shift
+  local -a opts=("$@")
+
+  if [ "${#opts[@]}" -gt 0 ]; then
+    local last_idx=$(( ${#opts[@]} - 1 ))
+    if [ "${opts[$last_idx]}" = "Back" ]; then
+      if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
+        opts=( "${opts[@]:0:$last_idx}" " " "Back" )
+      fi
+    fi
+  fi
+
   if ui_has_gum; then
     gum choose \
       --header "$title" \
@@ -262,18 +271,22 @@ ui_choose() {
       --item.foreground ${C_ACCENT} \
       --selected.foreground ${C_ACCENT} \
       --cursor.foreground ${C_CURSOR} \
-      "$@"
+      "${opts[@]}"
   else
     printf "%s\n" "$title" >&2
     local i=1
-    for opt in "$@"; do
+    for opt in "${opts[@]}"; do
       printf "  %d) %s\n" "$i" "$opt" >&2
       i=$((i+1))
     done
-    printf "Select [1-%d]: " "$(($#))" >&2
+    local count="${#opts[@]}"
+    printf "Select [1-%d]: " "$count" >&2
     local n; read -r n
     n="${n:-1}"
-    echo "${@:n:1}"
+    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
+      n=1
+    fi
+    echo "${opts[$((n - 1))]}"
   fi
 }
 
@@ -1470,13 +1483,22 @@ NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
 
-CSTM — Custom dynamic engine built from selected industries/objective.
-
 EOT
 }
 
 choose() {
   local title="$1"; shift
+  local -a opts=("$@")
+
+  if [ "${#opts[@]}" -gt 0 ]; then
+    local last_idx=$(( ${#opts[@]} - 1 ))
+    if [ "${opts[$last_idx]}" = "Back" ]; then
+      if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
+        opts=( "${opts[@]:0:$last_idx}" " " "Back" )
+      fi
+    fi
+  fi
+
   if has_gum; then
     local h=18
     local lines=""
@@ -1504,14 +1526,18 @@ choose() {
       --cursor.foreground 33 \
       --height "${h}" \
       --no-show-help \
-      "$@"
+      "${opts[@]}"
   else
     echo "$title" >&2
     local i=1
-    for opt in "$@"; do echo "  $i) $opt" >&2; i=$((i+1)); done
-    printf "Select [1-%d]: " "$#" >&2
+    for opt in "${opts[@]}"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    local count="${#opts[@]}"
+    printf "Select [1-%d]: " "$count" >&2
     local n; read -r n; n="${n:-1}"
-    echo "${@:n:1}"
+    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
+      n=1
+    fi
+    echo "${opts[$((n - 1))]}"
   fi
 }
 
@@ -2466,6 +2492,17 @@ secs_until_midnight_et() {
 
 choose() {
   local title="$1"; shift
+  local -a opts=("$@")
+
+  if [ "${#opts[@]}" -gt 0 ]; then
+    local last_idx=$(( ${#opts[@]} - 1 ))
+    if [ "${opts[$last_idx]}" = "Back" ]; then
+      if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
+        opts=( "${opts[@]:0:$last_idx}" " " "Back" )
+      fi
+    fi
+  fi
+
   if has_gum; then
     local h=18
     local lines=""
@@ -2493,14 +2530,18 @@ choose() {
       --cursor.foreground 33 \
       --height "${h}" \
       --no-show-help \
-      "$@"
+      "${opts[@]}"
   else
     echo "$title" >&2
     local i=1
-    for opt in "$@"; do echo "  $i) $opt" >&2; i=$((i+1)); done
-    printf "Select [1-%d]: " "$#" >&2
+    for opt in "${opts[@]}"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    local count="${#opts[@]}"
+    printf "Select [1-%d]: " "$count" >&2
     local n; read -r n; n="${n:-1}"
-    echo "${@:n:1}"
+    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
+      n=1
+    fi
+    echo "${opts[$((n - 1))]}"
   fi
 }
 
@@ -2749,12 +2790,12 @@ PY
 build_cstm_candidate_labels() {
   local payload="$1"
   local objective="$2"
-  printf '%s' "$payload" | python3 - "$objective" <<'PY'
+  python3 - "$payload" "$objective" <<'PY'
 import json
 import sys
 
-objective = sys.argv[1]
-data = json.load(sys.stdin)
+data = json.loads(sys.argv[1])
+objective = sys.argv[2]
 
 if objective == "STABILITY":
     keys = ("Max Drawdown", "Annualized Volatility")
@@ -2774,12 +2815,12 @@ PY
 cstm_candidate_by_rank() {
   local payload="$1"
   local rank="$2"
-  printf '%s' "$payload" | python3 - "$rank" <<'PY'
+  python3 - "$payload" "$rank" <<'PY'
 import json
 import sys
 
-rank = str(sys.argv[1]).strip()
-data = json.load(sys.stdin)
+data = json.loads(sys.argv[1])
+rank = str(sys.argv[2]).strip()
 for cand in data.get("candidates", []):
     if str(cand.get("rank")) == rank:
         print(json.dumps(cand))
@@ -2809,32 +2850,35 @@ cstm_run_now_if_possible() {
 create_engine_menu() {
   command -v python3 >/dev/null 2>&1 || { warn "python3 is required for Create Engine."; return 0; }
 
-  local industry
-  industry="$(choose "Create Engine — Industry" \
-    "Information Technology" \
-    "Health Care" \
-    "Financials" \
-    "Consumer Discretionary" \
-    "Industrials" \
-    "Consumer Staples" \
-    "Energy" \
-    "Materials" \
-    "Utilities" \
-    "Real Estate" \
-    "No preference" \
-    "Back")"
-  [ "$industry" != "Back" ] || return 0
+  local industry=""
+  while true; do
+    industry="$(choose "Create Engine - Select Industry" \
+      "Information Technology" \
+      "Health Care" \
+      "Financials" \
+      "Consumer Discretionary" \
+      "Industrials" \
+      "Consumer Staples" \
+      "Energy" \
+      "Materials" \
+      "Utilities" \
+      "Real Estate" \
+      "No preference" \
+      "Back")"
+    [ "$industry" != "Back" ] || return 0
+    [ -n "${industry//[[:space:]]/}" ] && break
+  done
 
   local portfolio_choice objective
-  portfolio_choice="$(choose "Create Engine — Portfolio type" \
-    "1. Highest return (GROWTH) — Focus on CAGR and Total Return." \
-    "2. Lowest risk / smoother ride (STABILITY) — Focus on Max Drawdown and Annualized Volatility." \
-    "3. Best risk-adjusted return (EFFICIENCY) — Focus on Sharpe, Sortino, and Calmar." \
+  portfolio_choice="$(choose "Create Engine - Select Portfolio Type" \
+    "Highest return (GROWTH)" \
+    "Lowest risk / smoother ride (STABILITY)" \
+    "Best risk-adjusted return (EFFICIENCY)" \
     "Back")"
   case "$portfolio_choice" in
-    "1. Highest return (GROWTH) — Focus on CAGR and Total Return.") objective="GROWTH" ;;
-    "2. Lowest risk / smoother ride (STABILITY) — Focus on Max Drawdown and Annualized Volatility.") objective="STABILITY" ;;
-    "3. Best risk-adjusted return (EFFICIENCY) — Focus on Sharpe, Sortino, and Calmar.") objective="EFFICIENCY" ;;
+    "Highest return (GROWTH)") objective="GROWTH" ;;
+    "Lowest risk / smoother ride (STABILITY)") objective="STABILITY" ;;
+    "Best risk-adjusted return (EFFICIENCY)") objective="EFFICIENCY" ;;
     *) return 0 ;;
   esac
 
@@ -2863,10 +2907,10 @@ create_engine_menu() {
   result_json="$(run_cstm_optimizer_json "$industry" "$objective")"
 
   local ok_flag
-  ok_flag="$(printf '%s' "$result_json" | python3 - <<'PY'
+  ok_flag="$(python3 - "$result_json" <<'PY'
 import json, sys
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(sys.argv[1])
     print("1" if data.get("ok") else "0")
 except Exception:
     print("0")
@@ -2874,10 +2918,10 @@ PY
 )"
   if [ "$ok_flag" != "1" ]; then
     local err
-    err="$(printf '%s' "$result_json" | python3 - <<'PY'
+    err="$(python3 - "$result_json" <<'PY'
 import json, sys
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(sys.argv[1])
     print(data.get("error", "Create Engine failed."))
 except Exception:
     print("Create Engine failed.")
@@ -2905,30 +2949,30 @@ PY
   [ -n "$candidate_json" ] || { warn "Could not load selected portfolio."; return 0; }
 
   local tickers_csv weights_json stop_json metrics_line
-  tickers_csv="$(printf '%s' "$candidate_json" | python3 - <<'PY'
+  tickers_csv="$(python3 - "$candidate_json" <<'PY'
 import json, sys
-c = json.load(sys.stdin)
+c = json.loads(sys.argv[1])
 print(",".join(c.get("tickers", [])))
 PY
 )"
-  weights_json="$(printf '%s' "$candidate_json" | python3 - <<'PY'
+  weights_json="$(python3 - "$candidate_json" <<'PY'
 import json, sys
-c = json.load(sys.stdin)
+c = json.loads(sys.argv[1])
 print(json.dumps(c.get("weights", {}), separators=(",", ":")))
 PY
 )"
-  stop_json="$(printf '%s' "$candidate_json" | python3 - <<'PY'
+  stop_json="$(python3 - "$candidate_json" <<'PY'
 import json, sys
-c = json.load(sys.stdin)
+c = json.loads(sys.argv[1])
 tickers = c.get("tickers", [])
 print(json.dumps({t: 6.0 for t in tickers}, separators=(",", ":")))
 PY
 )"
-  metrics_line="$(printf '%s' "$candidate_json" | python3 - "$objective" <<'PY'
+  metrics_line="$(python3 - "$candidate_json" "$objective" <<'PY'
 import json, sys
-c = json.load(sys.stdin)
+c = json.loads(sys.argv[1])
 metrics = c.get("metrics", {})
-objective = sys.argv[1]
+objective = sys.argv[2]
 if objective == "STABILITY":
     keys = ("Max Drawdown", "Annualized Volatility")
 elif objective == "EFFICIENCY":
