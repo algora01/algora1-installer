@@ -16,6 +16,9 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
+# Set your custom artifact URLs here:
+# - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.py")
+# - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
 CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip"
 ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ca112bb6a1942d0992b0a8b7ad96c8e.zip"
 
@@ -25,7 +28,7 @@ zip_url_for_engine() {
     PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
     TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
     NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
-    CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip" ;;
+    CSTM) echo "${CSTM_ZIP_URL}" ;;
     *) echo "" ;;
   esac
 }
@@ -2925,13 +2928,20 @@ create_engine_menu() {
   fi
   echo ""
 
-  ensure_cstm_builder_ready || return 0
+  if ! ensure_cstm_builder_ready; then
+    hard_clear
+    center_box $'Create Engine setup failed.\n\nMissing dependencies or ~/engine_builder_core.py.\n\nPress Enter to return to the menu.'
+    ui_wait_enter_only
+    return 0
+  fi
 
   info "Running optimization for ${objective}..."
   local result_json
   result_json="$(run_cstm_optimizer_json "$industry" "$objective" 2>/dev/null || true)"
   if [ -z "${result_json//[[:space:]]/}" ]; then
-    warn "Create Engine failed before returning results. Verify ~/engine_builder_core.py compatibility."
+    hard_clear
+    center_box $'Create Engine failed before returning results.\n\nVerify network access and ~/engine_builder_core.py compatibility.\n\nPress Enter to return to the menu.'
+    ui_wait_enter_only
     return 0
   fi
 
@@ -2956,19 +2966,24 @@ except Exception:
     print("Create Engine failed.")
 PY
 )"
-    warn "$err"
+    hard_clear
+    center_box "$(printf "Create Engine failed:\n\n%s\n\nPress Enter to return to the menu." "$err")"
+    ui_wait_enter_only
     return 0
   fi
 
   local -a candidate_options=()
   mapfile -t candidate_options < <(build_cstm_candidate_labels "$result_json" "$objective")
   if [ "${#candidate_options[@]}" -eq 0 ]; then
-    warn "No portfolio options were produced."
+    hard_clear
+    center_box $'No portfolio options were produced.\n\nTry another industry or objective.\n\nPress Enter to return to the menu.'
+    ui_wait_enter_only
     return 0
   fi
 
   local selected_option rank
   selected_option="$(choose "Top 3 portfolio options (${objective})" "${candidate_options[@]}" "Back")"
+  [ -n "${selected_option//[[:space:]]/}" ] || return 0
   [ "$selected_option" != "Back" ] || return 0
   rank="${selected_option%%)*}"
   [[ "$rank" =~ ^[0-9]+$ ]] || { warn "Invalid portfolio selection."; return 0; }
@@ -3479,7 +3494,7 @@ main_loop() {
       "Live Charts") live_charts_menu ;;
       "System Activity") troubleshoot_menu ;;
       "Exit") exit 0 ;;
-      *) exit 0 ;;
+      *) continue ;;
     esac
   done
 }
