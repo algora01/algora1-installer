@@ -16,16 +16,19 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
-CSTM_ZIP_URL="${CSTM_ZIP_URL:-}"
+# Set your custom artifact URLs here:
+# - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.py")
+# - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
+CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip"
 ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ca112bb6a1942d0992b0a8b7ad96c8e.zip"
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0a379cb6e4ad491fb7635ddb7f4ca600.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3368c25ecd0c4afdadd14b2e0772a1f2.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_61050c7245a84fa886f405f2cb7d5682.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ffcd82e7c60e4c4dadd9fb4d90d95335.zip" ;;
-    CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ab6227986dd54662a8278789faa899d7.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
+    CSTM) echo "${CSTM_ZIP_URL}" ;;
     *) echo "" ;;
   esac
 }
@@ -251,29 +254,40 @@ ui_spin() {
 ui_choose() {
   local title="$1"; shift
   local -a opts=("$@")
+  local back_gap=0
+  local last_idx=-1
 
   if [ "${#opts[@]}" -gt 0 ]; then
-    local last_idx=$(( ${#opts[@]} - 1 ))
+    last_idx=$(( ${#opts[@]} - 1 ))
     if [ "${opts[$last_idx]}" = "Back" ]; then
       if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        opts=( "${opts[@]:0:$last_idx}" " " "Back" )
+        opts[$last_idx]=$'\nBack'
+        back_gap=1
       fi
     fi
   fi
 
   if ui_has_gum; then
-    gum choose \
+    local selected
+    selected="$(gum choose \
       --header "$title" \
       --header.foreground ${C_ACCENT} \
       --item.foreground ${C_ACCENT} \
       --selected.foreground ${C_ACCENT} \
       --cursor.foreground ${C_CURSOR} \
-      "${opts[@]}"
+      "${opts[@]}")"
+    selected="${selected#$'\n'}"
+    printf "%s\n" "$selected"
   else
     printf "%s\n" "$title" >&2
     local i=1
+    local opt shown
     for opt in "${opts[@]}"; do
-      printf "  %d) %s\n" "$i" "$opt" >&2
+      if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
+        printf "\n" >&2
+      fi
+      shown="${opt#$'\n'}"
+      printf "  %d) %s\n" "$i" "$shown" >&2
       i=$((i+1))
     done
     local count="${#opts[@]}"
@@ -283,7 +297,9 @@ ui_choose() {
     if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
       n=1
     fi
-    echo "${opts[$((n - 1))]}"
+    local selected="${opts[$((n - 1))]}"
+    selected="${selected#$'\n'}"
+    printf "%s\n" "$selected"
   fi
 }
 
@@ -717,7 +733,7 @@ download_and_extract_single_exe() {
 
   local candidates=()
   while IFS= read -r -d '' f; do candidates+=("$f"); done < <(
-    find "${extract_dir}" -type f \( -name "${name}" -o -name "${name}.exe" \) -print0
+    find "${extract_dir}" -type f \( -name "${name}" -o -name "${name}.exe" -o -name "${name}.py" \) -print0
   )
 
   if [ "${#candidates[@]}" -eq 0 ]; then
@@ -727,7 +743,7 @@ download_and_extract_single_exe() {
   fi
 
   if [ "${#candidates[@]}" -ne 1 ]; then
-    ui_warn "${name}.zip must contain exactly ONE engine file (named '${name}' or '${name}.exe'). Found: ${#candidates[@]}"
+    ui_warn "${name}.zip must contain exactly ONE engine file (named '${name}', '${name}.py', or '${name}.exe'). Found: ${#candidates[@]}"
     ui_warn "Files found:"
     (cd "${extract_dir}" && find . -maxdepth 3 -type f -print) >&2 || true
     ui_die "Bad zip format for ${name}"
@@ -1486,12 +1502,15 @@ EOT
 choose() {
   local title="$1"; shift
   local -a opts=("$@")
+  local back_gap=0
+  local last_idx=-1
 
   if [ "${#opts[@]}" -gt 0 ]; then
-    local last_idx=$(( ${#opts[@]} - 1 ))
+    last_idx=$(( ${#opts[@]} - 1 ))
     if [ "${opts[$last_idx]}" = "Back" ]; then
       if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        opts=( "${opts[@]:0:$last_idx}" " " "Back" )
+        opts[$last_idx]=$'\nBack'
+        back_gap=1
       fi
     fi
   fi
@@ -1514,7 +1533,8 @@ choose() {
       tput rc 1>&2 2>/dev/null || true
     fi
 
-    gum choose \
+    local selected
+    selected="$(gum choose \
       --header "$title" \
       --header.foreground 39 \
       --item.foreground 39 \
@@ -1523,18 +1543,30 @@ choose() {
       --cursor.foreground 33 \
       --height "${h}" \
       --no-show-help \
-      "${opts[@]}"
+      "${opts[@]}")"
+    selected="${selected#$'\n'}"
+    printf "%s\n" "$selected"
   else
     echo "$title" >&2
     local i=1
-    for opt in "${opts[@]}"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    local opt shown
+    for opt in "${opts[@]}"; do
+      if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
+        printf "\n" >&2
+      fi
+      shown="${opt#$'\n'}"
+      echo "  $i) $shown" >&2
+      i=$((i+1))
+    done
     local count="${#opts[@]}"
     printf "Select [1-%d]: " "$count" >&2
     local n; read -r n; n="${n:-1}"
     if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
       n=1
     fi
-    echo "${opts[$((n - 1))]}"
+    local selected="${opts[$((n - 1))]}"
+    selected="${selected#$'\n'}"
+    printf "%s\n" "$selected"
   fi
 }
 
@@ -1607,7 +1639,23 @@ run_engine_prompt_if_safe() {
 
   local engine_path="./${engine}"
   [ -x "${engine_path}" ] || engine_path="/usr/local/bin/${engine}"
-  "${engine_path}"
+  if [ "$engine" = "CSTM" ]; then
+    local magic_hex=""
+    magic_hex="$(od -An -tx1 -N4 "${engine_path}" 2>/dev/null | tr -d '[:space:]')"
+    if [[ "${magic_hex}" == 4d5a* ]]; then
+      warn "CSTM appears to be a Windows .exe. Linux VM cannot run Windows executables."
+      warn "Upload CSTM as a Python script (file named CSTM or CSTM.py in the zip) or a Linux binary."
+      return 0
+    fi
+
+    if [ "${magic_hex}" = "7f454c46" ]; then
+      "${engine_path}"
+    else
+      python3 "${engine_path}"
+    fi
+  else
+    "${engine_path}"
+  fi
   return 0
 }
 
@@ -2490,12 +2538,15 @@ secs_until_midnight_et() {
 choose() {
   local title="$1"; shift
   local -a opts=("$@")
+  local back_gap=0
+  local last_idx=-1
 
   if [ "${#opts[@]}" -gt 0 ]; then
-    local last_idx=$(( ${#opts[@]} - 1 ))
+    last_idx=$(( ${#opts[@]} - 1 ))
     if [ "${opts[$last_idx]}" = "Back" ]; then
       if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        opts=( "${opts[@]:0:$last_idx}" " " "Back" )
+        opts[$last_idx]=$'\nBack'
+        back_gap=1
       fi
     fi
   fi
@@ -2518,7 +2569,8 @@ choose() {
       tput rc 1>&2 2>/dev/null || true
     fi
 
-    gum choose \
+    local selected
+    selected="$(gum choose \
       --header "$title" \
       --header.foreground 39 \
       --item.foreground 39 \
@@ -2527,18 +2579,30 @@ choose() {
       --cursor.foreground 33 \
       --height "${h}" \
       --no-show-help \
-      "${opts[@]}"
+      "${opts[@]}")"
+    selected="${selected#$'\n'}"
+    printf "%s\n" "$selected"
   else
     echo "$title" >&2
     local i=1
-    for opt in "${opts[@]}"; do echo "  $i) $opt" >&2; i=$((i+1)); done
+    local opt shown
+    for opt in "${opts[@]}"; do
+      if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
+        printf "\n" >&2
+      fi
+      shown="${opt#$'\n'}"
+      echo "  $i) $shown" >&2
+      i=$((i+1))
+    done
     local count="${#opts[@]}"
     printf "Select [1-%d]: " "$count" >&2
     local n; read -r n; n="${n:-1}"
     if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
       n=1
     fi
-    echo "${opts[$((n - 1))]}"
+    local selected="${opts[$((n - 1))]}"
+    selected="${selected#$'\n'}"
+    printf "%s\n" "$selected"
   fi
 }
 
@@ -2737,14 +2801,13 @@ core.SECTOR_UNIVERSE = sector_universe
 core.ALL_SECTORS = list(sector_universe.keys())
 core.NO_PREFERENCE = "No preference"
 
-industries = [core.NO_PREFERENCE] if industry == core.NO_PREFERENCE else [industry]
-strategy = core.StrategySpec(
-    entry_rule="close > sma50 and sma10 > sma20 and not (close < sma20 or open < sma20)",
-    exit_rule="close < sma20 or sma10 < sma20",
-    stop_loss_pct=-6.0,
-)
-
 try:
+    industries = [core.NO_PREFERENCE] if industry == core.NO_PREFERENCE else [industry]
+    strategy = core.StrategySpec(
+        entry_rule="close > sma50 and sma10 > sma20 and not (close < sma20 or open < sma20)",
+        exit_rule="close < sma20 or sma10 < sma20",
+        stop_loss_pct=-6.0,
+    )
     sectors, tickers = core.selected_universe(industries)
     candidates = core.optimize_top_candidates(
         industries=industries,
@@ -2755,32 +2818,30 @@ try:
         prefilter_count=14,
         top_n=3,
     )
+    if not candidates:
+        print(json.dumps({"ok": False, "error": "No valid candidates found for this industry/objective.", "tickers": tickers}))
+        raise SystemExit(0)
+
+    out = []
+    for c in candidates:
+        out.append({
+            "rank": c.rank,
+            "tickers": c.tickers,
+            "weights": c.weights,
+            "metrics": c.metrics.as_display(),
+            "objective": c.objective,
+        })
+
+    print(json.dumps({
+        "ok": True,
+        "industry": industry,
+        "sectors": sectors,
+        "tickers": tickers,
+        "objective": objective,
+        "candidates": out,
+    }))
 except Exception as exc:
     print(json.dumps({"ok": False, "error": f"Optimization failed: {exc}"}))
-    raise SystemExit(0)
-
-if not candidates:
-    print(json.dumps({"ok": False, "error": "No valid candidates found for this industry/objective.", "tickers": tickers}))
-    raise SystemExit(0)
-
-out = []
-for c in candidates:
-    out.append({
-        "rank": c.rank,
-        "tickers": c.tickers,
-        "weights": c.weights,
-        "metrics": c.metrics.as_display(),
-        "objective": c.objective,
-    })
-
-print(json.dumps({
-    "ok": True,
-    "industry": industry,
-    "sectors": sectors,
-    "tickers": tickers,
-    "objective": objective,
-    "candidates": out,
-}))
 PY
 }
 
@@ -2901,7 +2962,11 @@ create_engine_menu() {
 
   info "Running optimization for ${objective}..."
   local result_json
-  result_json="$(run_cstm_optimizer_json "$industry" "$objective")"
+  result_json="$(run_cstm_optimizer_json "$industry" "$objective" 2>/dev/null || true)"
+  if [ -z "${result_json//[[:space:]]/}" ]; then
+    warn "Create Engine failed before returning results. Verify ~/engine_builder_core.py compatibility."
+    return 0
+  fi
 
   local ok_flag
   ok_flag="$(python3 - "$result_json" <<'PY'
