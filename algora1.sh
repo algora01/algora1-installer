@@ -19,8 +19,8 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 # Set your custom artifact URLs here:
 # - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.py")
 # - ENGINE_BUILDER_CORE_ZIP_URL should point to a zip containing one file named "engine_builder_core.py"
-CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip"
-ENGINE_BUILDER_CORE_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3ca112bb6a1942d0992b0a8b7ad96c8e.zip"
+CSTM_ZIP_URL="${CSTM_ZIP_URL:-}"
+ENGINE_BUILDER_CORE_ZIP_URL="${ENGINE_BUILDER_CORE_ZIP_URL:-}"
 
 zip_url_for_engine() {
   case "$1" in
@@ -261,33 +261,31 @@ ui_choose() {
     last_idx=$(( ${#opts[@]} - 1 ))
     if [ "${opts[$last_idx]}" = "Back" ]; then
       if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        opts[$last_idx]=$'\nBack'
         back_gap=1
       fi
     fi
   fi
 
   if ui_has_gum; then
-    local selected
+    local selected=""
     selected="$(gum choose \
       --header "$title" \
       --header.foreground ${C_ACCENT} \
       --item.foreground ${C_ACCENT} \
       --selected.foreground ${C_ACCENT} \
       --cursor.foreground ${C_CURSOR} \
-      "${opts[@]}")"
-    selected="${selected#$'\n'}"
+      "${opts[@]}" || true)"
     printf "%s\n" "$selected"
+    return 0
   else
     printf "%s\n" "$title" >&2
     local i=1
-    local opt shown
+    local opt
     for opt in "${opts[@]}"; do
       if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
         printf "\n" >&2
       fi
-      shown="${opt#$'\n'}"
-      printf "  %d) %s\n" "$i" "$shown" >&2
+      printf "  %d) %s\n" "$i" "$opt" >&2
       i=$((i+1))
     done
     local count="${#opts[@]}"
@@ -297,9 +295,7 @@ ui_choose() {
     if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
       n=1
     fi
-    local selected="${opts[$((n - 1))]}"
-    selected="${selected#$'\n'}"
-    printf "%s\n" "$selected"
+    printf "%s\n" "${opts[$((n - 1))]}"
   fi
 }
 
@@ -1509,7 +1505,6 @@ choose() {
     last_idx=$(( ${#opts[@]} - 1 ))
     if [ "${opts[$last_idx]}" = "Back" ]; then
       if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        opts[$last_idx]=$'\nBack'
         back_gap=1
       fi
     fi
@@ -1525,15 +1520,7 @@ choose() {
       fi
     fi
 
-    # Pin navigation hint to terminal bottom; hide gum's built-in help line.
-    if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
-      tput sc 1>&2 2>/dev/null || true
-      tput cup $((lines - 1)) 0 1>&2 2>/dev/null || true
-      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m' >&2
-      tput rc 1>&2 2>/dev/null || true
-    fi
-
-    local selected
+    local selected=""
     selected="$(gum choose \
       --header "$title" \
       --header.foreground 39 \
@@ -1542,20 +1529,18 @@ choose() {
       --selected.background 39 \
       --cursor.foreground 33 \
       --height "${h}" \
-      --no-show-help \
-      "${opts[@]}")"
-    selected="${selected#$'\n'}"
+      "${opts[@]}" || true)"
     printf "%s\n" "$selected"
+    return 0
   else
     echo "$title" >&2
     local i=1
-    local opt shown
+    local opt
     for opt in "${opts[@]}"; do
       if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
         printf "\n" >&2
       fi
-      shown="${opt#$'\n'}"
-      echo "  $i) $shown" >&2
+      echo "  $i) $opt" >&2
       i=$((i+1))
     done
     local count="${#opts[@]}"
@@ -1564,9 +1549,7 @@ choose() {
     if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
       n=1
     fi
-    local selected="${opts[$((n - 1))]}"
-    selected="${selected#$'\n'}"
-    printf "%s\n" "$selected"
+    printf "%s\n" "${opts[$((n - 1))]}"
   fi
 }
 
@@ -2545,7 +2528,6 @@ choose() {
     last_idx=$(( ${#opts[@]} - 1 ))
     if [ "${opts[$last_idx]}" = "Back" ]; then
       if [ "$last_idx" -eq 0 ] || [ -n "${opts[$((last_idx - 1))]//[[:space:]]/}" ]; then
-        opts[$last_idx]=$'\nBack'
         back_gap=1
       fi
     fi
@@ -2561,15 +2543,7 @@ choose() {
       fi
     fi
 
-    # Pin navigation hint to terminal bottom; hide gum's built-in help line.
-    if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
-      tput sc 1>&2 2>/dev/null || true
-      tput cup $((lines - 1)) 0 1>&2 2>/dev/null || true
-      printf '\033[2K\033[38;5;245m←↓↑→ navigate • enter submit\033[0m' >&2
-      tput rc 1>&2 2>/dev/null || true
-    fi
-
-    local selected
+    local selected=""
     selected="$(gum choose \
       --header "$title" \
       --header.foreground 39 \
@@ -2578,20 +2552,18 @@ choose() {
       --selected.background 39 \
       --cursor.foreground 33 \
       --height "${h}" \
-      --no-show-help \
-      "${opts[@]}")"
-    selected="${selected#$'\n'}"
+      "${opts[@]}" || true)"
     printf "%s\n" "$selected"
+    return 0
   else
     echo "$title" >&2
     local i=1
-    local opt shown
+    local opt
     for opt in "${opts[@]}"; do
       if [ "$back_gap" -eq 1 ] && [ "$i" -eq $((last_idx + 1)) ]; then
         printf "\n" >&2
       fi
-      shown="${opt#$'\n'}"
-      echo "  $i) $shown" >&2
+      echo "  $i) $opt" >&2
       i=$((i+1))
     done
     local count="${#opts[@]}"
@@ -2600,9 +2572,7 @@ choose() {
     if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "$count" ]; then
       n=1
     fi
-    local selected="${opts[$((n - 1))]}"
-    selected="${selected#$'\n'}"
-    printf "%s\n" "$selected"
+    printf "%s\n" "${opts[$((n - 1))]}"
   fi
 }
 
