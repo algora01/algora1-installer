@@ -20,10 +20,10 @@ CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_06cc69efa5da43f59e73757d60058cf2.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f89eb61ab256499eb84c9c8bdcca9c8b.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1e78abeb48d0419e8b9f5693246adb6a.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_95cbe9e3a1974173910379cc07a33a78.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ab6227986dd54662a8278789faa899d7.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
     CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6fc0e7d8aac3405fb42fc604ffe4e58f.zip" ;;
     *) echo "" ;;
   esac
@@ -2693,12 +2693,12 @@ from __future__ import annotations
 import math
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 
 SECTOR_UNIVERSE: Dict[str, List[str]] = {
@@ -2891,6 +2891,8 @@ _VALID_IDENTIFIERS = {
 }
 
 _DATA_CACHE: Dict[Tuple[str, int], pd.DataFrame] = {}
+_ALPACA_DATA_CLIENT = None
+_ALPACA_CLIENT_ERROR: Optional[str] = None
 
 
 def _fmt_num(v: float) -> str:
@@ -2904,6 +2906,99 @@ def normalize_ticker(ticker: str) -> str:
     if t == "BRK.B":
         return "BRK-B"
     return t
+
+
+def _resolve_alpaca_credentials() -> Tuple[Optional[str], Optional[str]]:
+    pairs = (
+        ("ALPACA_PAPER_API_KEY", "ALPACA_PAPER_SECRET_KEY"),
+        ("ALPACA_LIVE_API_KEY", "ALPACA_LIVE_SECRET_KEY"),
+        ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY"),
+        ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"),
+    )
+    for key_name, secret_name in pairs:
+        key = os.getenv(key_name, "").strip()
+        secret = os.getenv(secret_name, "").strip()
+        if key and secret:
+            return key, secret
+    return None, None
+
+
+def _get_alpaca_data_client():
+    global _ALPACA_DATA_CLIENT, _ALPACA_CLIENT_ERROR
+    if _ALPACA_DATA_CLIENT is not None:
+        return _ALPACA_DATA_CLIENT
+    if _ALPACA_CLIENT_ERROR:
+        return None
+
+    key, secret = _resolve_alpaca_credentials()
+    if not key or not secret:
+        _ALPACA_CLIENT_ERROR = (
+            "Missing Alpaca credentials. Set ALPACA_PAPER_API_KEY/ALPACA_PAPER_SECRET_KEY "
+            "or ALPACA_LIVE_API_KEY/ALPACA_LIVE_SECRET_KEY."
+        )
+        return None
+
+    try:
+        from alpaca.data import StockHistoricalDataClient
+    except Exception as exc:
+        _ALPACA_CLIENT_ERROR = f"alpaca-py import failed: {exc}"
+        return None
+
+    try:
+        _ALPACA_DATA_CLIENT = StockHistoricalDataClient(key, secret)
+    except Exception as exc:
+        _ALPACA_CLIENT_ERROR = f"Could not initialize Alpaca data client: {exc}"
+        return None
+    return _ALPACA_DATA_CLIENT
+
+
+def _normalize_alpaca_bars_df(df: pd.DataFrame, ticker: str) -> Optional[pd.DataFrame]:
+    if df is None or df.empty:
+        return None
+
+    out = df.copy()
+    target = normalize_ticker(ticker)
+
+    if isinstance(out.index, pd.MultiIndex) and "symbol" in out.index.names:
+        symbols = out.index.get_level_values("symbol").astype(str).str.upper()
+        out = out[symbols == target]
+        if out.empty:
+            return None
+        out = out.droplevel("symbol")
+    elif "symbol" in out.columns:
+        symbols = out["symbol"].astype(str).str.upper()
+        out = out[symbols == target]
+        if out.empty:
+            return None
+        out = out.drop(columns=["symbol"], errors="ignore")
+
+    if not isinstance(out.index, pd.DatetimeIndex):
+        if "timestamp" in out.columns:
+            out = out.set_index("timestamp")
+        elif "time" in out.columns:
+            out = out.set_index("time")
+        elif "date" in out.columns:
+            out = out.set_index("date")
+        else:
+            return None
+
+    lower_cols = {str(c).lower(): c for c in out.columns}
+    needed = {}
+    for name in ("open", "high", "low", "close"):
+        col = lower_cols.get(name)
+        if col is None:
+            return None
+        needed[col] = name
+
+    out = out.rename(columns=needed)[["open", "high", "low", "close"]].copy()
+    idx = pd.to_datetime(out.index, errors="coerce", utc=True)
+    out = out[~idx.isna()].copy()
+    if out.empty:
+        return None
+    idx = idx[~idx.isna()]
+    out.index = idx.tz_convert(None)
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    return out
 
 
 def selected_universe(industries: Iterable[str]) -> Tuple[List[str], List[str]]:
@@ -3005,21 +3100,40 @@ def fetch_ohlc(ticker: str, years: int = 10) -> Optional[pd.DataFrame]:
     if key in _DATA_CACHE:
         return _DATA_CACHE[key].copy()
 
-    try:
-        hist = yf.Ticker(ticker).history(period=f"{years}y", interval="1d")
-    except Exception:
-        return None
-    if hist is None or hist.empty:
+    client = _get_alpaca_data_client()
+    if client is None:
         return None
 
-    df = hist.rename(
-        columns={"Open": "open", "High": "high", "Low": "low", "Close": "close"}
-    )[["open", "high", "low", "close"]].copy()
-    idx = pd.to_datetime(df.index)
-    if getattr(idx, "tz", None) is not None:
-        idx = idx.tz_localize(None)
-    df.index = idx
-    df = df.sort_index()
+    try:
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+    except Exception as exc:
+        global _ALPACA_CLIENT_ERROR
+        _ALPACA_CLIENT_ERROR = f"alpaca-py request classes unavailable: {exc}"
+        return None
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=max(int(years * 366), 365))
+
+    req = StockBarsRequest(
+        symbol_or_symbols=normalize_ticker(ticker),
+        timeframe=TimeFrame.Day,
+        start=start,
+        end=end,
+        adjustment="all",
+        feed="iex",
+    )
+
+    try:
+        bars = client.get_stock_bars(req)
+    except Exception as exc:
+        _ALPACA_CLIENT_ERROR = f"Alpaca bars fetch failed for {ticker}: {exc}"
+        return None
+
+    df = _normalize_alpaca_bars_df(getattr(bars, "df", None), ticker)
+    if df is None or df.empty:
+        return None
+
     _DATA_CACHE[key] = df.copy()
     return df
 
@@ -3285,6 +3399,9 @@ def optimize_top_candidates(
 ) -> List[Candidate]:
     if objective not in VALID_OBJECTIVES:
         raise ValueError(f"Unsupported objective '{objective}'.")
+    client = _get_alpaca_data_client()
+    if client is None:
+        raise RuntimeError(_ALPACA_CLIENT_ERROR or "Could not initialize Alpaca data client.")
     strategy = validate_strategy(strategy)
     sectors, universe = selected_universe(industries)
     if not universe:
@@ -3300,6 +3417,8 @@ def optimize_top_candidates(
         singles.append((t, score_metrics(result["metrics"], objective)))
 
     if not singles:
+        if _ALPACA_CLIENT_ERROR:
+            raise RuntimeError(_ALPACA_CLIENT_ERROR)
         return []
 
     singles.sort(key=lambda x: x[1], reverse=True)
@@ -3428,7 +3547,6 @@ def default_strategy() -> StrategySpec:
         exit_rule=DEFAULT_EXIT_RULE,
         stop_loss_pct=-6.0,
     )
-
 PYCORE
   chmod 644 "$HOME/engine_builder_core.py" >/dev/null 2>&1 || true
 }
@@ -3450,7 +3568,7 @@ ensure_cstm_builder_ready() {
   local dep_check=""
   dep_check="$(python3 - <<'PY'
 import importlib
-for m in ("numpy", "pandas", "yfinance"):
+for m in ("numpy", "pandas", "alpaca"):
     try:
         importlib.import_module(m)
     except Exception as exc:
@@ -3465,14 +3583,14 @@ PY
     return 0
   fi
 
-  info "Installing optimizer dependencies (numpy/pandas/yfinance)…"
+  info "Installing optimizer dependencies (numpy/pandas/alpaca-py)…"
 
   if ! python3 -m pip --version >/dev/null 2>&1; then
     python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
   fi
 
-  if ! python3 -m pip install --user --quiet numpy pandas yfinance >/dev/null 2>&1; then
-    if ! python3 -m pip install --user --quiet --break-system-packages numpy pandas yfinance >/dev/null 2>&1; then
+  if ! python3 -m pip install --user --quiet numpy pandas alpaca-py >/dev/null 2>&1; then
+    if ! python3 -m pip install --user --quiet --break-system-packages numpy pandas alpaca-py >/dev/null 2>&1; then
       CSTM_SETUP_ERR="Dependency install failed. Check VM internet/DNS and Python pip availability."
       warn "$CSTM_SETUP_ERR"
       return 1
@@ -3481,7 +3599,7 @@ PY
 
   dep_check="$(python3 - <<'PY'
 import importlib
-for m in ("numpy", "pandas", "yfinance"):
+for m in ("numpy", "pandas", "alpaca"):
     try:
         importlib.import_module(m)
     except Exception as exc:
