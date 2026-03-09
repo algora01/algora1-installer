@@ -16,14 +16,16 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
+# Set your custom artifact URLs here:
+# - CSTM_ZIP_URL should point to a zip containing one file named "CSTM" (or "CSTM.py")
 CSTM_ZIP_URL="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip"
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0a379cb6e4ad491fb7635ddb7f4ca600.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_3368c25ecd0c4afdadd14b2e0772a1f2.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_61050c7245a84fa886f405f2cb7d5682.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ffcd82e7c60e4c4dadd9fb4d90d95335.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ab6227986dd54662a8278789faa899d7.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
     CSTM) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_69072b0e369946d5a2d35c15ab59d39c.zip" ;;
     *) echo "" ;;
   esac
@@ -568,12 +570,12 @@ ensure_macos_app_bundle_present() {
   local desktop_app="${HOME}/Desktop/ALGORA1.app"
 
   if is_trusted_algora1_app_bundle "$app_root"; then
-    ui_ok "macOS app bundle present: $app_root"
+    ui_ok "macOS app bundle already present: $app_root"
     return 0
   fi
 
   if is_trusted_algora1_app_bundle "$desktop_app"; then
-    ui_ok "macOS app bundle present: $desktop_app"
+    ui_ok "macOS app bundle already present: $desktop_app"
     return 0
   fi
 
@@ -3433,37 +3435,70 @@ PYCORE
   chmod 644 "$HOME/engine_builder_core.py" >/dev/null 2>&1 || true
 }
 
+CSTM_SETUP_ERR=""
+
 ensure_cstm_builder_ready() {
+  CSTM_SETUP_ERR=""
+
   if [ ! -f "$HOME/engine_builder_core.py" ]; then
     info "Installing embedded engine_builder_core.py..."
     write_embedded_engine_builder_core || {
-      warn "Could not write ~/engine_builder_core.py from embedded payload."
+      CSTM_SETUP_ERR="Could not write ~/engine_builder_core.py from embedded payload."
+      warn "$CSTM_SETUP_ERR"
       return 1
     }
   fi
 
-  if python3 - <<'PY' >/dev/null 2>&1; then
+  local dep_check=""
+  dep_check="$(python3 - <<'PY'
 import importlib
 for m in ("numpy", "pandas", "yfinance"):
-    importlib.import_module(m)
+    try:
+        importlib.import_module(m)
+    except Exception as exc:
+        print(f"{m}: {exc}")
+        break
+else:
+    print("ok")
 PY
+)"
+  dep_check="${dep_check//$'\n'/ }"
+  if [ "$dep_check" = "ok" ]; then
     return 0
   fi
 
   info "Installing optimizer dependencies (numpy/pandas/yfinance)…"
-  if ! python3 -m pip install --user --quiet numpy pandas yfinance >/dev/null 2>&1; then
-    warn "Dependency install failed. Please check internet access and Python pip setup on VM."
-    return 1
+
+  if ! python3 -m pip --version >/dev/null 2>&1; then
+    python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
   fi
 
-  python3 - <<'PY' >/dev/null 2>&1 || {
+  if ! python3 -m pip install --user --quiet numpy pandas yfinance >/dev/null 2>&1; then
+    if ! python3 -m pip install --user --quiet --break-system-packages numpy pandas yfinance >/dev/null 2>&1; then
+      CSTM_SETUP_ERR="Dependency install failed. Check VM internet/DNS and Python pip availability."
+      warn "$CSTM_SETUP_ERR"
+      return 1
+    fi
+  fi
+
+  dep_check="$(python3 - <<'PY'
 import importlib
 for m in ("numpy", "pandas", "yfinance"):
-    importlib.import_module(m)
+    try:
+        importlib.import_module(m)
+    except Exception as exc:
+        print(f"{m}: {exc}")
+        break
+else:
+    print("ok")
 PY
-    warn "Dependencies still unavailable after install."
+)"
+  dep_check="${dep_check//$'\n'/ }"
+  if [ "$dep_check" != "ok" ]; then
+    CSTM_SETUP_ERR="Dependencies still unavailable after install (${dep_check})."
+    warn "$CSTM_SETUP_ERR"
     return 1
-  }
+  fi
 
   return 0
 }
@@ -3663,8 +3698,10 @@ create_engine_menu() {
   echo ""
 
   if ! ensure_cstm_builder_ready; then
+    local setup_err
+    setup_err="${CSTM_SETUP_ERR:-Missing dependencies or ~/engine_builder_core.py.}"
     hard_clear
-    center_box $'Create Engine setup failed.\n\nMissing dependencies or ~/engine_builder_core.py.\n\nPress Enter to return to the menu.'
+    center_box "$(printf "Create Engine setup failed.\n\n%s\n\nPress Enter to return to the menu." "$setup_err")"
     ui_wait_enter_only
     return 0
   fi
