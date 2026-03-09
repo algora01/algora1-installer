@@ -4,6 +4,8 @@ set -euo pipefail
 export CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=1
 export CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=1
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 INSTANCE_NAME="algora1"
 KEY_NAME="ssh_key1"
 
@@ -16,12 +18,38 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
+BUILDER_BUNDLE_URL_DEFAULT=""
+BUILDER_PMNY_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_9e941a66098449c2bc36e1f524480b14.zip"
+BUILDER_ENGINE_BUILDER_CORE_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_70cb81616dc74e65b1a75b782b5a03a9.zip"
+BUILDER_ENGINE_BUILDER_CLI_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_af93dec6038842af8ca25ca1c6ad7b4d.zip"
+BUILDER_ENGINE_BACKTEST_APP_ZIP_URL_DEFAULT="https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_56991b312b2f4700a9ff2325b3af09f2.zip"
+
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ab6227986dd54662a8278789faa899d7.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_38139453eb8147d2aada99e4ba4a3df6.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a1e6c53cfc64a9eae0a48416fb4802e.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d155ac78d124d3ab470ad349efb3ce1.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4d3a5845dce34f1caf3f17040fa13eec.zip" ;;
+    *) echo "" ;;
+  esac
+}
+
+zip_url_for_builder_bundle() {
+  local from_env="${ALGORA1_BUILDER_BUNDLE_URL:-}"
+  if [ -n "${from_env}" ]; then
+    echo "${from_env}"
+  else
+    echo "${BUILDER_BUNDLE_URL_DEFAULT}"
+  fi
+}
+
+zip_url_for_builder_asset() {
+  local unit="$1"
+  case "$unit" in
+    PMNY) echo "${ALGORA1_PMNY_ZIP_URL:-${BUILDER_PMNY_ZIP_URL_DEFAULT}}" ;;
+    engine_builder_core) echo "${ALGORA1_ENGINE_BUILDER_CORE_ZIP_URL:-${BUILDER_ENGINE_BUILDER_CORE_ZIP_URL_DEFAULT}}" ;;
+    engine_builder_cli) echo "${ALGORA1_ENGINE_BUILDER_CLI_ZIP_URL:-${BUILDER_ENGINE_BUILDER_CLI_ZIP_URL_DEFAULT}}" ;;
+    engine_backtest_app) echo "${ALGORA1_ENGINE_BACKTEST_APP_ZIP_URL:-${BUILDER_ENGINE_BACKTEST_APP_ZIP_URL_DEFAULT}}" ;;
     *) echo "" ;;
   esac
 }
@@ -760,6 +788,163 @@ copy_engines_from_wix_to_vm() {
   ui_ok "Engine transfer complete"
 }
 
+copy_dynamic_builder_assets_to_vm() {
+  local ip="$1"
+  local key_path="${HOME}/.ssh/${KEY_NAME}"
+  local remote_home="/home/${REMOTE_USER}"
+
+  ui_step "[10.5/12] Uploading dynamic engine builder assets"
+
+  local required_assets=( "PMNY" "engine_builder_cli" )
+  local optional_assets=( "engine_builder_core" "engine_backtest_app" )
+  local uploaded_any=0
+
+  local bundle_url
+  bundle_url="$(zip_url_for_builder_bundle)"
+  local has_asset_urls=1
+  local unit_check
+  for unit_check in "${required_assets[@]}"; do
+    if [ -z "$(zip_url_for_builder_asset "${unit_check}")" ]; then
+      has_asset_urls=0
+      break
+    fi
+  done
+
+  resolve_local_asset() {
+    local unit="$1"
+    local c
+    for c in \
+      "${SCRIPT_DIR}/${unit}" \
+      "${SCRIPT_DIR}/${unit}.py" \
+      "${SCRIPT_DIR}/${unit}.exe" \
+      "${HOME}/Documents/Playground/${unit}" \
+      "${HOME}/Documents/Playground/${unit}.py" \
+      "${HOME}/Documents/Playground/${unit}.exe" \
+      "${PWD}/${unit}" \
+      "${PWD}/${unit}.py" \
+      "${PWD}/${unit}.exe"
+    do
+      if [ -f "${c}" ]; then
+        printf "%s\n" "${c}"
+        return 0
+      fi
+    done
+    return 1
+  }
+
+  resolve_bundle_asset() {
+    local extract_dir="$1"
+    local unit="$2"
+    find "${extract_dir}" -type f \( -name "${unit}" -o -name "${unit}.py" -o -name "${unit}.exe" \) | head -n 1
+  }
+
+  upload_asset_to_vm() {
+    local src="$1"
+    local unit="$2"
+    local base target
+    base="$(basename "${src}")"
+    target="${base}"
+    if [ "${base}" = "${unit}.exe" ]; then
+      target="${unit}"
+    fi
+
+    ui_spin "Uploading ${target}…" scp -q -i "${key_path}" -o StrictHostKeyChecking=accept-new \
+      "${src}" "${REMOTE_USER}@${ip}:${remote_home}/${target}" \
+      || ui_die "Failed to upload ${target} to VM"
+    uploaded_any=1
+  }
+
+  if [ -n "${bundle_url}" ]; then
+    ensure_local_tools_for_zip
+    local workdir
+    workdir="$(mktemp -d 2>/dev/null || mktemp -d -t algora1_bundlework)"
+    local zip_path="${workdir}/builder_bundle.zip"
+    local extract_dir="${workdir}/extract"
+
+    download_file_with_progress "Downloading builder bundle.zip" "${bundle_url}" "${zip_path}"
+    mkdir -p "${extract_dir}"
+    unzip -q "${zip_path}" -d "${extract_dir}" || ui_die "Failed to unzip builder bundle"
+
+    local name src
+    for name in "${required_assets[@]}"; do
+      src="$(resolve_bundle_asset "${extract_dir}" "${name}")"
+      if [ -z "${src}" ] || [ ! -f "${src}" ]; then
+        ui_die "Builder bundle is missing required file: ${name}"
+      fi
+
+      upload_asset_to_vm "${src}" "${name}"
+    done
+
+    for name in "${optional_assets[@]}"; do
+      src="$(resolve_bundle_asset "${extract_dir}" "${name}")"
+      if [ -n "${src}" ] && [ -f "${src}" ]; then
+        upload_asset_to_vm "${src}" "${name}"
+      fi
+    done
+
+    rm -rf "${workdir}" >/dev/null 2>&1 || true
+  elif [ "${has_asset_urls}" = "1" ]; then
+    ensure_local_tools_for_zip
+    local workdir
+    workdir="$(mktemp -d 2>/dev/null || mktemp -d -t algora1_builderzip)"
+
+    local name src url
+    for name in "${required_assets[@]}"; do
+      url="$(zip_url_for_builder_asset "${name}")"
+      [ -n "${url}" ] || ui_die "Missing ZIP URL for builder asset: ${name}"
+
+      src="$(download_and_extract_single_exe "${name}" "${url}" "${workdir}")"
+      [ -f "${src}" ] || ui_die "Extracted builder asset not found: ${name}"
+      upload_asset_to_vm "${src}" "${name}"
+    done
+
+    for name in "${optional_assets[@]}"; do
+      url="$(zip_url_for_builder_asset "${name}")"
+      [ -n "${url}" ] || continue
+      src="$(download_and_extract_single_exe "${name}" "${url}" "${workdir}")"
+      [ -f "${src}" ] || continue
+      upload_asset_to_vm "${src}" "${name}"
+    done
+
+    rm -rf "${workdir}" >/dev/null 2>&1 || true
+  else
+    for name in "${required_assets[@]}"; do
+      local src=""
+      src="$(resolve_local_asset "${name}" || true)"
+
+      if [ ! -f "${src}" ]; then
+        ui_warn "Local asset missing (skipping): ${name}"
+        continue
+      fi
+
+      upload_asset_to_vm "${src}" "${name}"
+    done
+
+    for name in "${optional_assets[@]}"; do
+      local src=""
+      src="$(resolve_local_asset "${name}" || true)"
+
+      if [ -f "${src}" ]; then
+        upload_asset_to_vm "${src}" "${name}"
+      fi
+    done
+  fi
+
+  if [ "${uploaded_any}" = "1" ]; then
+    ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new "${REMOTE_USER}@${ip}" \
+      "chmod +x \
+        '${remote_home}/PMNY' '${remote_home}/PMNY.py' \
+        '${remote_home}/engine_builder_core' '${remote_home}/engine_builder_core.py' \
+        '${remote_home}/engine_builder_cli' '${remote_home}/engine_builder_cli.py' \
+        '${remote_home}/engine_backtest_app' '${remote_home}/engine_backtest_app.py' \
+        2>/dev/null || true" \
+      >/dev/null 2>&1 || true
+    ui_ok "Dynamic builder assets uploaded"
+  else
+    ui_warn "No dynamic builder assets were uploaded. Set ALGORA1_BUILDER_BUNDLE_URL or keep local files."
+  fi
+}
+
 CFG_DIR="${HOME}/.config/algora1_setup"
 CFG_FILE="${CFG_DIR}/config.env"
 
@@ -1413,6 +1598,25 @@ install_gum_if_needed() {
 
 install_gum_if_needed || true
 
+install_engine_builder_python_deps() {
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  if python3 - <<'PY' >/dev/null 2>&1
+import importlib.util
+mods = ["pandas", "numpy", "yfinance", "streamlit", "plotly", "openai"]
+missing = [m for m in mods if importlib.util.find_spec(m) is None]
+raise SystemExit(0 if not missing else 1)
+PY
+  then
+    return 0
+  fi
+
+  python3 -m pip --version >/dev/null 2>&1 || return 0
+  python3 -m pip install --user --upgrade pandas numpy yfinance streamlit plotly openai >/dev/null 2>&1 || true
+}
+
+install_engine_builder_python_deps || true
+
 sudo tee /usr/local/bin/algora1-session >/dev/null <<'SESSION'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1483,7 +1687,6 @@ info() { printf "INFO %s\n" "$*"; }
 warn() { printf "WARN %s\n" "$*" >&2; }
 
 engine_running_anywhere() {
-  # Detect real engine executables only (argv[0] basename), not symbol args.
   ps -eo args= 2>/dev/null | awk '
     {
       cmd=$1
@@ -1492,9 +1695,73 @@ engine_running_anywhere() {
         found=1
         exit 0
       }
+      if ($0 ~ /--engine-launcher/) {
+        found=1
+        exit 0
+      }
     }
     END { exit(found ? 0 : 1) }
   '
+}
+
+dynamic_engine_names() {
+  local dir="$HOME/.algora1/engines"
+  [ -d "$dir" ] || return 0
+  find "$dir" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+    | sed -E 's#^.*/##; s#\.json$##' \
+    | sort -u
+}
+
+collect_engine_choices() {
+  local -a names=()
+  local seen=""
+  local n
+  for n in "${ENGINE_NAMES[@]}"; do
+    names+=("$n")
+    seen="${seen}|${n}|"
+  done
+  while read -r n; do
+    [ -n "$n" ] || continue
+    if [[ "$seen" != *"|${n}|"* ]]; then
+      names+=("$n")
+      seen="${seen}|${n}|"
+    fi
+  done < <(dynamic_engine_names)
+  printf "%s\n" "${names[@]}"
+}
+
+run_engine_binary_or_launcher() {
+  local engine="$1"
+  local local_exec="./${engine}"
+  local home_exec="$HOME/${engine}"
+
+  if [ -f "$local_exec" ]; then
+    chmod +x "$local_exec" >/dev/null 2>&1 || true
+    "$local_exec"
+    return 0
+  fi
+
+  if [ -f "$home_exec" ]; then
+    chmod +x "$home_exec" >/dev/null 2>&1 || true
+    "$home_exec"
+    return 0
+  fi
+
+  warn "Engine launcher not found: ${engine}"
+  return 1
+}
+
+run_engine_builder_cli() {
+  if [ -x "$HOME/engine_builder_cli" ]; then
+    "$HOME/engine_builder_cli" "$@"
+    return $?
+  fi
+  if [ -f "$HOME/engine_builder_cli.py" ]; then
+    python3 "$HOME/engine_builder_cli.py" "$@"
+    return $?
+  fi
+  warn "engine_builder_cli not found at $HOME/engine_builder_cli or $HOME/engine_builder_cli.py"
+  return 1
 }
 
 run_engine_prompt_if_safe() {
@@ -1504,34 +1771,76 @@ run_engine_prompt_if_safe() {
   fi
 
   local action
-  action="$(choose "Run investment engine?" "Run investment engine" "Back")"
+  action="$(choose "Run investment engine?" "Run preset/custom engine" "View custom engine" "Build custom engine" "Back")"
 
-  # IMPORTANT: Back should exit the screen session so you return to the Home menu
-  if [ "$action" != "Run investment engine" ]; then
+  if [ "$action" = "Back" ]; then
     return 1
   fi
 
+  if [ "$action" = "Build custom engine" ]; then
+    [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
+    [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
+    run_engine_builder_cli || true
+    return 0
+  fi
+
+  if [ "$action" = "View custom engine" ]; then
+    [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
+    [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
+
+    local -a custom_choices=()
+    while read -r e; do
+      [ -n "$e" ] || continue
+      custom_choices+=("$e")
+    done < <(dynamic_engine_names)
+
+    if [ "${#custom_choices[@]}" -eq 0 ]; then
+      warn "No custom engines found in $HOME/.algora1/engines"
+      return 0
+    fi
+
+    local view_engine
+    view_engine="$(choose "View custom engine" "${custom_choices[@]}")"
+    [ -n "$view_engine" ] || return 0
+    run_engine_builder_cli --view-engine "$view_engine" || true
+    return 0
+  fi
+
+  local -a engine_choices=()
+  while read -r e; do
+    [ -n "$e" ] || continue
+    engine_choices+=("$e")
+  done < <(collect_engine_choices)
+  [ "${#engine_choices[@]}" -gt 0 ] || { warn "No engines available."; return 0; }
+
   local engine
-  engine="$(choose "Select engine" "${ENGINE_NAMES[@]}")"
+  engine="$(choose "Select engine" "${engine_choices[@]}")"
   [ -n "$engine" ] || return 1
 
   printf '\033[H\033[2J\033[3J' 2>/dev/null || true
-
-  chmod +x "./${engine}" >/dev/null 2>&1 || true
 
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
 
   missing=()
-  [ -n "${ALPACA_PAPER_API_KEY:-}" ] || missing+=("ALPACA_PAPER_API_KEY")
-  [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || missing+=("ALPACA_PAPER_SECRET_KEY")
+  local paper_ok=1
+  local live_ok=1
+  [ -n "${ALPACA_PAPER_API_KEY:-}" ] && [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || paper_ok=0
+  [ -n "${ALPACA_LIVE_API_KEY:-}" ] && [ -n "${ALPACA_LIVE_SECRET_KEY:-}" ] || live_ok=0
+  if [ "$paper_ok" = "0" ] && [ "$live_ok" = "0" ]; then
+    missing+=("ALPACA_PAPER_API_KEY")
+    missing+=("ALPACA_PAPER_SECRET_KEY")
+    missing+=("ALPACA_LIVE_API_KEY")
+    missing+=("ALPACA_LIVE_SECRET_KEY")
+  fi
   if [ "${#missing[@]}" -gt 0 ]; then
-    warn "Missing keys in this session: ${missing[*]}"
+    warn "No complete Alpaca keypair found in this session."
+    warn "Missing keys: ${missing[*]}"
     warn "Fix: ensure keys exist in ~/.profile or ~/.bashrc for user $(whoami)"
     return 0
   fi
 
-  "./${engine}"
+  run_engine_binary_or_launcher "$engine" || true
   return 0
 }
 
@@ -2568,6 +2877,8 @@ create_new_session() {
 engine_running_anywhere() {
   pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
   pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af 'python3 .*PMNY\.py' >/dev/null 2>&1 && return 0
+  pgrep -af -- '--engine-launcher' >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -2578,7 +2889,12 @@ log_for_engine() {
     TSLA) echo "tsla_investing.log" ;;
     NVDA) echo "nvda_investing.log" ;;
     PMNY) echo "pmny_investing.log" ;;
-    *) echo "pmny_investing.log" ;;
+    *)
+      local slug
+      slug="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+      [ -n "$slug" ] || slug="pmny"
+      echo "${slug}_investing.log"
+      ;;
   esac
 }
 
@@ -2588,7 +2904,12 @@ live_status_for_engine() {
     TSLA) echo "tsla_live_status.txt" ;;
     NVDA) echo "nvda_live_status.txt" ;;
     PMNY) echo "pmny_live_status.txt" ;;
-    *) echo "pmny_live_status.txt" ;;
+    *)
+      local slug
+      slug="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+      [ -n "$slug" ] || slug="pmny"
+      echo "${slug}_live_status.txt"
+      ;;
   esac
 }
 
@@ -2596,10 +2917,23 @@ detect_running_engine_best_effort() {
   # Match only executable basename (argv[0]), so plain "TSLA" args don't count.
   ps -eo args= 2>/dev/null | awk '
     {
+      for (i=1; i<=NF; i++) {
+        if ($i=="--engine-launcher" && i<NF) {
+          print $(i+1)
+          found=1
+          exit 0
+        }
+      }
+
       cmd=$1
       sub(/^.*\//, "", cmd)
       if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY") {
         print cmd
+        found=1
+        exit 0
+      }
+      if (cmd=="python3" && $0 ~ /PMNY\.py/) {
+        print "PMNY"
         found=1
         exit 0
       }
@@ -2692,6 +3026,30 @@ running_sessions_menu() {
       *) return 0 ;;
     esac
   fi
+}
+
+engine_builder_menu() {
+  hard_clear
+  cursor_show
+
+  [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
+  [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
+
+  if [ -x "$HOME/engine_builder_cli" ]; then
+    "$HOME/engine_builder_cli" || true
+  elif [ -f "$HOME/engine_builder_cli.py" ]; then
+    python3 "$HOME/engine_builder_cli.py" || true
+  else
+    center_box $'Engine Builder script not found.\n\nExpected one of:\n~/engine_builder_cli\n~/engine_builder_cli.py\n\nPress Enter to return to the menu.'
+    ui_wait_enter_only
+    hard_clear
+    return 0
+  fi
+  echo ""
+  echo "Press Enter to return to the menu."
+  read -r _discard || true
+  hard_clear
+  return 0
 }
 
 live_status_menu() {
@@ -2904,6 +3262,7 @@ main_loop() {
     local selection
     selection="$(choose "Select an option" \
       "Running session" \
+      "Engine Builder" \
       "Live Status" \
       "Live Charts" \
       "System Activity" \
@@ -2911,6 +3270,7 @@ main_loop() {
 
     case "$selection" in
       "Running session") running_sessions_menu ;;
+      "Engine Builder") engine_builder_menu ;;
       "Live Status") live_status_menu ;;
       "Live Charts") live_charts_menu ;;
       "System Activity") troubleshoot_menu ;;
@@ -3049,6 +3409,7 @@ main() {
   customize_motd_on_vm "${ip}"
 
   copy_engines_from_wix_to_vm "${ip}"
+  copy_dynamic_builder_assets_to_vm "${ip}"
 
   install_control_panel_on_vm "${ip}"
 
