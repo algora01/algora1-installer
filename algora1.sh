@@ -1787,7 +1787,7 @@ if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get update -y >/dev/null 2>&1 || true
   sudo apt-get install -y python3-pip python3-venv >/dev/null 2>&1 || true
   python3 -m pip install --upgrade pip >/dev/null 2>&1 || true
-  python3 -m pip install pandas alpaca-py >/dev/null 2>&1 || true
+  python3 -m pip install pandas alpaca-py requests colorama >/dev/null 2>&1 || true
 fi
 
 sudo tee /usr/local/bin/algora1-session >/dev/null <<'SESSION'
@@ -1877,7 +1877,7 @@ input() {
       --cursor.foreground 39 \
       --placeholder.foreground 245 \
       --placeholder "" \
-      --width 40 1>&2
+      --width 40
   else
     printf "%s " "$prompt" >&2
     local v; read -r v
@@ -1958,7 +1958,7 @@ write_custom_engine() {
   PORTFOLIO_B64="$(printf '%s' "$portfolio" | base64 | tr -d '\n')"
   ACCOUNT_MODE_B64="$(printf '%s' "$account_mode" | base64 | tr -d '\n')"
 
-  cat > "$HOME/${engine_file_name}" <<'CSTM_EOF'
+cat > "$HOME/${engine_file_name}" <<'CSTM_EOF'
 #!/usr/bin/env python3
 import os
 import sys
@@ -1972,6 +1972,7 @@ import atexit
 import logging
 import traceback
 import requests
+import itertools
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -1991,7 +1992,7 @@ ENGINE_LABEL = base64.b64decode(os.environ["ENGINE_LABEL_B64"]).decode("utf-8")
 INDUSTRY = base64.b64decode(os.environ["INDUSTRY_B64"]).decode("utf-8")
 PORTFOLIO = base64.b64decode(os.environ["PORTFOLIO_B64"]).decode("utf-8")
 ACCOUNT_MODE = base64.b64decode(os.environ["ACCOUNT_MODE_B64"]).decode("utf-8")
-TICKERS = base64.b64decode(os.environ["TICKER_CSV_B64"]).decode("utf-8").split(",")
+ALL_TICKERS = [x.strip() for x in base64.b64decode(os.environ["TICKER_CSV_B64"]).decode("utf-8").split(",") if x.strip()]
 
 LIVE_KEY = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
 LIVE_SECRET = os.getenv("ALPACA_LIVE_SECRET_KEY", "").strip()
@@ -2016,6 +2017,9 @@ BACKGROUND_CHECK_INTERVAL = timedelta(hours=24)
 safe_name = ENGINE_LABEL.replace("/", "_").replace(" ", "_")
 STATUS_FILE = os.path.expanduser(f"~/.algora1_{safe_name}_live_status.txt")
 LOG_FILE = os.path.expanduser(f"~/.algora1_{safe_name}_investing.log")
+
+RANK_CACHE = None
+SELECTED_TICKERS = None
 
 def now_et():
     return datetime.now(ET)
@@ -2131,9 +2135,9 @@ def _print_subscription_box(user_text="", loading_text="", panel_width=78):
 def render_subscription_panel(user_text="", loading_text=""):
     _print_subscription_box(user_text=user_text, loading_text=loading_text)
 
-def animated_loading(user_text="", duration=8):
+def animated_loading(user_text="", duration=3):
     _drain_stdin_buffer()
-    total_steps = 80
+    total_steps = 40
     inner = max(24, min(78, _terminal_columns(80)) - 4)
     for i in range(total_steps):
         pct = int((i + 1) * 100 / total_steps)
@@ -2169,7 +2173,7 @@ def verify_subscription():
             time.sleep(1.1)
             continue
 
-        animated_loading(user_text=user_id, duration=8)
+        animated_loading(user_text=user_id, duration=3)
         _drain_stdin_buffer()
 
         try:
@@ -2261,31 +2265,225 @@ def current_positions(trading_client):
 def place_buy(trading_client, symbol: str, notional: float):
     if notional <= 0:
         return
-    order = MarketOrderRequest(symbol=symbol, notional=round(notional, 2), side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
+    order = MarketOrderRequest(
+        symbol=symbol,
+        notional=round(notional, 2),
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+    )
     trading_client.submit_order(order_data=order)
 
 def place_sell(trading_client, symbol: str, qty: float):
     if qty <= 0:
         return
-    order = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.SELL, time_in_force=TimeInForce.DAY)
+    order = MarketOrderRequest(
+        symbol=symbol,
+        qty=qty,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.DAY,
+    )
     trading_client.submit_order(order_data=order)
 
 def market_is_open_now():
     now = now_et()
     return now.weekday() < 5 and ((now.hour > 9 or (now.hour == 9 and now.minute >= 29)) and (now.hour < 16))
 
+def fetch_history_matrix(data_client, tickers, lookback_days=900):
+    end = datetime.utcnow()
+    start = end - timedelta(days=lookback_days)
+
+    req = StockBarsRequest(
+        symbol_or_symbols=tickers,
+        timeframe=TimeFrame.Day,
+        start=start,
+        end=end,
+    )
+    bars = data_client.get_stock_bars(req).df
+    if bars.empty:
+        return {}
+
+    history = {}
+    if isinstance(bars.index, pd.MultiIndex):
+        symbols = sorted(set(idx[0] for idx in bars.index))
+        for sym in symbols:
+            df = bars.xs(sym, level=0).sort_index().copy()
+            history[sym] = df
+    else:
+        history[tickers[0]] = bars.sort_index().copy()
+
+    return history
+
+def build_signal_returns(df):
+    out = df.copy()
+    out = out.sort_index()
+    out["ret"] = out["close"].pct_change().fillna(0.0)
+    out["SMA10"] = out["close"].rolling(10).mean()
+    out["SMA20"] = out["close"].rolling(20).mean()
+    out["SMA50"] = out["close"].rolling(50).mean()
+    out["signal"] = (
+        (out["close"] > out["SMA50"]) &
+        (out["SMA10"] > out["SMA20"]) &
+        ~(out["close"] < out["SMA20"])
+    ).astype(float)
+    out["strategy_ret"] = out["ret"] * out["signal"].shift(1).fillna(0.0)
+    return out
+
+def compute_metrics(portfolio_returns):
+    r = pd.Series(portfolio_returns).dropna()
+    if len(r) < 30:
+        return None
+
+    equity = (1 + r).cumprod()
+    total_return = equity.iloc[-1] - 1.0
+    n_years = len(r) / 252.0
+    cagr = (equity.iloc[-1] ** (1 / n_years) - 1.0) if n_years > 0 else 0.0
+
+    rolling_max = equity.cummax()
+    drawdown = equity / rolling_max - 1.0
+    max_dd = drawdown.min()
+
+    vol = r.std(ddof=0) * math.sqrt(252)
+    sharpe = ((r.mean() * 252) / vol) if vol > 0 else 0.0
+
+    downside = r[r < 0]
+    downside_std = downside.std(ddof=0) * math.sqrt(252) if len(downside) > 0 else 0.0
+    sortino = ((r.mean() * 252) / downside_std) if downside_std > 0 else 0.0
+
+    calmar = (cagr / abs(max_dd)) if max_dd < 0 else 0.0
+
+    return {
+        "CAGR": cagr,
+        "Total Return": total_return,
+        "Max Drawdown": max_dd,
+        "Calmar": calmar,
+        "Annualized Volatility": vol,
+        "Sharpe": sharpe,
+        "Sortino": sortino,
+    }
+
+def ranking_key(row):
+    if PORTFOLIO.startswith("Growth"):
+        return (
+            row["CAGR"],
+            row["Total Return"],
+            row["Sharpe"],
+            -abs(row["Max Drawdown"]),
+        )
+    if PORTFOLIO.startswith("Stability"):
+        return (
+            -abs(row["Max Drawdown"]),
+            -row["Annualized Volatility"],
+            row["Sharpe"],
+            row["CAGR"],
+        )
+    return (
+        row["Sharpe"],
+        row["Sortino"],
+        row["Calmar"],
+        row["CAGR"],
+    )
+
+def rank_portfolio_setups(data_client):
+    global RANK_CACHE
+
+    if RANK_CACHE is not None:
+        return RANK_CACHE
+
+    history = fetch_history_matrix(data_client, ALL_TICKERS, lookback_days=900)
+    prepared = {}
+    usable = []
+    for sym in ALL_TICKERS:
+        df = history.get(sym)
+        if df is None or df.empty or len(df) < 120:
+            continue
+        built = build_signal_returns(df)
+        if built["strategy_ret"].dropna().empty:
+            continue
+        prepared[sym] = built
+        usable.append(sym)
+
+    if len(usable) < 3:
+        raise RuntimeError("Not enough usable tickers to rank portfolio setups.")
+
+    combos = list(itertools.combinations(usable, 3))
+    results = []
+
+    for combo in combos:
+        frames = []
+        for sym in combo:
+            s = prepared[sym][["strategy_ret"]].rename(columns={"strategy_ret": sym})
+            frames.append(s)
+
+        merged = pd.concat(frames, axis=1).fillna(0.0)
+        portfolio_returns = merged.mean(axis=1)
+        metrics = compute_metrics(portfolio_returns)
+        if metrics is None:
+            continue
+
+        row = {
+            "Tickers": combo,
+            **metrics,
+        }
+        results.append(row)
+
+    if not results:
+        raise RuntimeError("No valid portfolio setups were ranked.")
+
+    results.sort(key=ranking_key, reverse=True)
+    RANK_CACHE = results
+    return results
+
+def pct(x):
+    return f"{x * 100:.2f}%"
+
+def build_ranking_lines(ranked):
+    lines = [
+        f"{ENGINE_LABEL}",
+        f"Industry: {INDUSTRY}",
+        f"Portfolio objective: {PORTFOLIO}",
+        f"Mode: {ACCOUNT_MODE}",
+        f"User ID: {user_id or 'Not set'}",
+        "",
+        "Top 3 ranked setups:",
+        "",
+    ]
+
+    for i, row in enumerate(ranked[:3], start=1):
+        lines.append(f"#{i}  {', '.join(row['Tickers'])}")
+        lines.append(f"    CAGR: {pct(row['CAGR'])}")
+        lines.append(f"    Total Return: {pct(row['Total Return'])}")
+        lines.append(f"    Max Drawdown: {pct(row['Max Drawdown'])}")
+        lines.append(f"    Volatility: {pct(row['Annualized Volatility'])}")
+        lines.append(f"    Sharpe: {row['Sharpe']:.2f}")
+        lines.append(f"    Sortino: {row['Sortino']:.2f}")
+        lines.append(f"    Calmar: {row['Calmar']:.2f}")
+        lines.append("")
+
+    best = ranked[0]
+    lines.append(f"Selected live setup: {', '.join(best['Tickers'])}")
+    return lines
+
+def ensure_selected_tickers(data_client):
+    global SELECTED_TICKERS
+    ranked = rank_portfolio_setups(data_client)
+    SELECTED_TICKERS = list(ranked[0]["Tickers"])
+    return ranked, SELECTED_TICKERS
+
 def main():
     if not background_subscription_check():
         return False
 
     trading_client, data_client, account_mode = get_clients()
+
+    ranked, selected_tickers = ensure_selected_tickers(data_client)
+
     acct = trading_client.get_account()
     equity = float(acct.equity)
     cash = float(acct.cash)
     positions = current_positions(trading_client)
 
     analyzed = []
-    for sym in TICKERS:
+    for sym in selected_tickers:
         sig = fetch_signal(data_client, sym)
         if sig is not None:
             analyzed.append((sym, sig))
@@ -2295,14 +2493,12 @@ def main():
     top = valid[:3] if valid else []
     top_symbols = [sym for sym, _ in top]
 
-    status_lines = [
-        f"{ENGINE_LABEL}",
-        f"Industry: {INDUSTRY}",
-        f"Portfolio: {PORTFOLIO}",
-        f"Mode: {account_mode}",
-        f"User ID: {user_id or 'Not set'}",
-        f"Universe: {', '.join(TICKERS)}",
-        f"Selected: {', '.join(top_symbols) if top_symbols else 'None'}",
+    status_lines = build_ranking_lines(ranked)
+    status_lines += [
+        "",
+        "Live engine state:",
+        f"Active setup universe: {', '.join(selected_tickers)}",
+        f"Selected right now: {', '.join(top_symbols) if top_symbols else 'None'}",
         "",
         f"Equity: ${equity:,.2f}",
         f"Cash: ${cash:,.2f}",
@@ -2320,7 +2516,7 @@ def main():
 
     if market_is_open_now():
         allocation = equity / max(len(top_symbols), 1) if top_symbols else 0.0
-        for sym in TICKERS:
+        for sym in selected_tickers:
             qty = positions.get(sym, 0.0)
             if sym in top_symbols and qty <= 0:
                 logging.info(f"BUY {sym} | allocation={allocation:.2f}")
@@ -3376,7 +3572,7 @@ input() {
       --cursor.foreground 39 \
       --placeholder.foreground 245 \
       --placeholder "" \
-      --width 40 1>&2
+      --width 40
   else
     printf "%s " "$prompt" >&2
     local v; read -r v
@@ -3651,18 +3847,6 @@ running_sessions_menu() {
 
       hard_clear
       draw_header_once
-      account_pick="$(choose "Use this custom engine for" "Paper" "Live" "Back")"
-      [ -n "$account_pick" ] || return 0
-      [ "$account_pick" != "Back" ] || return 0
-
-      case "$account_pick" in
-        "Paper") account_mode="PAPER" ;;
-        "Live")  account_mode="LIVE" ;;
-        *) return 0 ;;
-      esac
-
-      hard_clear
-      draw_header_once
       industry="$(prompt_industry || true)"
       [ -n "$industry" ] || return 0
       [ "$industry" != "Back" ] || return 0
@@ -3672,6 +3856,18 @@ running_sessions_menu() {
       portfolio="$(prompt_portfolio_type || true)"
       [ -n "$portfolio" ] || return 0
       [ "$portfolio" != "Back" ] || return 0
+
+      hard_clear
+      draw_header_once
+      account_pick="$(choose "Use this custom engine for" "Paper" "Live" "Back")"
+      [ -n "$account_pick" ] || return 0
+      [ "$account_pick" != "Back" ] || return 0
+
+      case "$account_pick" in
+        "Paper") account_mode="PAPER" ;;
+        "Live")  account_mode="LIVE" ;;
+        *) return 0 ;;
+      esac
 
       ticker_csv="$(ticker_csv_for_choice "$industry" "$portfolio")"
       [ -n "$ticker_csv" ] || { warn "No ticker mapping found."; return 0; }
