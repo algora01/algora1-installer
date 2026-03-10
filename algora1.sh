@@ -14,8 +14,8 @@ MACHINE_TYPE_DEFAULT="e2-medium"
 IMAGE_FAMILY="ubuntu-2404-lts-amd64"
 IMAGE_PROJECT="ubuntu-os-cloud"
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
-MENU_ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
+MENU_ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
@@ -1775,7 +1775,7 @@ case "${TERM:-}" in
   screen|screen-bce) export TERM="screen-256color" ;;
 esac
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
@@ -3387,6 +3387,7 @@ running_sessions_menu() {
     local action
     action="$(choose "Running session" \
       "Launch Pre-Made Engine" \
+      "Create Custom Engine" \
       "Back")"
     [ "$action" != "Back" ] || return 0
 
@@ -3413,7 +3414,7 @@ running_sessions_menu() {
 
     if [ "$action" = "Launch Pre-Made Engine" ]; then
       create_new_session "$name"
-    else
+    elif [ "$action" = "Create Custom Engine" ]; then
       hard_clear
       draw_header_once
       industry="$(prompt_industry || true)"
@@ -3826,46 +3827,12 @@ main() {
   ensure_credentials_tui
   save_cfg
 
-  local custom_choice=""
-  local custom_industry=""
-  local custom_portfolio=""
   local local_custom_engine_path=""
-
-  custom_choice="$(ui_choose "Create a custom engine locally?" "No" "Yes")"
-
-  if [ "$custom_choice" = "Yes" ]; then
-    custom_industry="$(ui_choose "Select industry" \
-      "Information Technology" \
-      "Health Care" \
-      "Financials" \
-      "Consumer Discretionary" \
-      "Communication Services" \
-      "Industrials" \
-      "Consumer Staples" \
-      "Energy" \
-      "Diversify Exposure")"
-
-    custom_portfolio="$(ui_choose "Select portfolio type" \
-      "Growth — Highest return (CAGR / Total Return)" \
-      "Stability — Lowest risk (Max Drawdown / Volatility)" \
-      "Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)")"
-
-    local_custom_engine_path="$(build_local_custom_engine_file \
-      "$custom_industry" \
-      "$custom_portfolio" \
-      "Custom Engine")"
-
-    ui_ok "Built local custom engine: $local_custom_engine_path"
-  fi
 
   write_exports_on_vm "${ip}"
   customize_motd_on_vm "${ip}"
 
   copy_engines_from_wix_to_vm "${ip}"
-
-  if [ -n "${local_custom_engine_path:-}" ]; then
-    upload_local_custom_engine_to_vm "${ip}" "${local_custom_engine_path}"
-  fi
 
   install_control_panel_on_vm "${ip}"
 
