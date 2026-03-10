@@ -1449,7 +1449,7 @@ install_control_panel_on_vm() {
   ui_step "[11/12] Installing Control Panel"
 
   ui_spin "Installing control panel scripts on VM…" ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
-    "${REMOTE_USER}@${ip}" "bash -s" <<'EOF'
+    "${REMOTE_USER}@${ip}" "bash -s" <<'REMOTE_INSTALL'
 set -euo pipefail
 
 has_gum() { command -v gum >/dev/null 2>&1; }
@@ -1655,7 +1655,7 @@ write_custom_engine() {
   local industry="$3"
   local portfolio="$4"
 
-  cat > "$HOME/CUSTOM_ENGINE" <<EOF
+  cat > "$HOME/CUSTOM_ENGINE" <<'CUSTOM_ENGINE_EOF'
 #!/usr/bin/env python3
 import os
 import time
@@ -1851,7 +1851,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-EOF
+CUSTOM_ENGINE_EOF
 
   chmod +x "$HOME/CUSTOM_ENGINE"
 }
@@ -3346,7 +3346,7 @@ if ! command -v screen >/dev/null 2>&1; then
   fi
 fi
 
-EOF
+REMOTE_INSTALL
 }
 
 ssh_into_instance_menu() {
