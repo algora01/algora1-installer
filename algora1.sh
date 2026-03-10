@@ -14,7 +14,8 @@ MACHINE_TYPE_DEFAULT="e2-medium"
 IMAGE_FAMILY="ubuntu-2404-lts-amd64"
 IMAGE_PROJECT="ubuntu-os-cloud"
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
+MENU_ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
 zip_url_for_engine() {
   case "$1" in
@@ -45,6 +46,8 @@ TSLA — Tesla engine with signal-based deployment and downside controls.
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
+
+CSTM — Custom local engine built from your selected industry and portfolio type.
 
 EOT
 }
@@ -729,6 +732,258 @@ download_and_extract_single_exe() {
   printf "%s\n" "${candidates[0]}"
 }
 
+build_local_custom_engine_file() {
+  local industry="$1"
+  local portfolio="$2"
+  local engine_label="$3"
+
+  local ticker_csv=""
+  case "$industry" in
+    "Information Technology") ticker_csv="MSFT,NVDA,AVGO,ORCL,ADBE,CRM,AMD,INTU,IBM,PLTR,CSCO,TXN,QCOM" ;;
+    "Health Care") ticker_csv="LLY,UNH,JNJ,ABBV,MRK,ISRG,ABT,TMO,AMGN,PFE" ;;
+    "Financials") ticker_csv="BRK.B,JPM,GS,MS,BLK,AXP,SCHW,C,USB,PNC" ;;
+    "Consumer Discretionary") ticker_csv="AMZN,TSLA,HD,MCD,SBUX,NKE,LOW,BKNG,TJX,CMG" ;;
+    "Communication Services") ticker_csv="GOOG,META,NFLX,TMUS,CMCSA,DIS,CHTR" ;;
+    "Industrials") ticker_csv="GE,CAT,HON,UNP,RTX,DE,ETN,LMT,UPS,UBER" ;;
+    "Consumer Staples") ticker_csv="COST,WMT,PG,KO,PEP,MDLZ,PM,CL" ;;
+    "Energy") ticker_csv="XOM,CVX,SLB,EOG,MPC,PSX,KMI" ;;
+    "Diversify Exposure") ticker_csv="MSFT,NVDA,GOOG,AMZN,LLY,JPM,GE,PG,XOM,META" ;;
+    *) ticker_csv="" ;;
+  esac
+
+  [ -n "$ticker_csv" ] || ui_die "No ticker mapping found for selected industry."
+
+  local engine_label_b64
+  local ticker_csv_b64
+  local industry_b64
+  local portfolio_b64
+
+  engine_label_b64="$(printf '%s' "$engine_label" | base64 | tr -d '\n')"
+  ticker_csv_b64="$(printf '%s' "$ticker_csv" | base64 | tr -d '\n')"
+  industry_b64="$(printf '%s' "$industry" | base64 | tr -d '\n')"
+  portfolio_b64="$(printf '%s' "$portfolio" | base64 | tr -d '\n')"
+
+  local out="${HOME}/.config/algora1_setup/CSTM"
+  mkdir -p "$(dirname "$out")"
+
+  cat > "$out" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+export ENGINE_LABEL_B64='${engine_label_b64}'
+export TICKER_CSV_B64='${ticker_csv_b64}'
+export INDUSTRY_B64='${industry_b64}'
+export PORTFOLIO_B64='${portfolio_b64}'
+
+exec python3 - <<'PY'
+import os
+import time
+import math
+import base64
+import traceback
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import pandas as pd
+
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+
+ENGINE_LABEL = base64.b64decode(os.environ["ENGINE_LABEL_B64"]).decode("utf-8")
+INDUSTRY = base64.b64decode(os.environ["INDUSTRY_B64"]).decode("utf-8")
+PORTFOLIO = base64.b64decode(os.environ["PORTFOLIO_B64"]).decode("utf-8")
+TICKERS = base64.b64decode(os.environ["TICKER_CSV_B64"]).decode("utf-8").split(",")
+
+LIVE_KEY = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
+LIVE_SECRET = os.getenv("ALPACA_LIVE_SECRET_KEY", "").strip()
+PAPER_KEY = os.getenv("ALPACA_PAPER_API_KEY", "").strip()
+PAPER_SECRET = os.getenv("ALPACA_PAPER_SECRET_KEY", "").strip()
+
+ET = ZoneInfo("America/New_York")
+
+STATUS_FILE = os.path.expanduser("~/custom_engine_live_status.txt")
+LOG_FILE = os.path.expanduser("~/custom_engine_investing.log")
+
+def log(msg: str):
+    line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {msg}"
+    print(line, flush=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(line + "\\n")
+
+def write_status(lines):
+    with open(STATUS_FILE, "w", encoding="utf-8") as f:
+        f.write("\\n".join(lines) + "\\n")
+
+def get_clients():
+    if LIVE_KEY and LIVE_SECRET:
+        return (
+            TradingClient(LIVE_KEY, LIVE_SECRET, paper=False),
+            StockHistoricalDataClient(LIVE_KEY, LIVE_SECRET),
+            "LIVE"
+        )
+    if PAPER_KEY and PAPER_SECRET:
+        return (
+            TradingClient(PAPER_KEY, PAPER_SECRET, paper=True),
+            StockHistoricalDataClient(PAPER_KEY, PAPER_SECRET),
+            "PAPER"
+        )
+    raise RuntimeError("No Alpaca credentials found.")
+
+def fetch_signal(data_client, symbol: str):
+    end = datetime.utcnow()
+    start = end - timedelta(days=180)
+
+    req = StockBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=TimeFrame.Day,
+        start=start,
+        end=end,
+    )
+    bars = data_client.get_stock_bars(req).df
+    if bars.empty:
+        return None
+
+    if isinstance(bars.index, pd.MultiIndex):
+        bars = bars.xs(symbol, level=0)
+
+    bars = bars.sort_index().copy()
+    bars["SMA10"] = bars["close"].rolling(10).mean()
+    bars["SMA20"] = bars["close"].rolling(20).mean()
+    bars["SMA50"] = bars["close"].rolling(50).mean()
+
+    row = bars.iloc[-1]
+    price = float(row["close"])
+    sma10 = float(row["SMA10"])
+    sma20 = float(row["SMA20"])
+    sma50 = float(row["SMA50"])
+
+    if any(math.isnan(x) for x in [sma10, sma20, sma50]):
+        return None
+
+    buy = (price > sma50) and (sma10 > sma20) and not (price < sma20)
+
+    return {
+        "price": price,
+        "sma10": sma10,
+        "sma20": sma20,
+        "sma50": sma50,
+        "buy": buy,
+        "strength": (price / sma50) + ((sma10 / sma20) if sma20 else 0.0),
+    }
+
+def current_positions(trading_client):
+    result = {}
+    for p in trading_client.get_all_positions():
+        try:
+            result[p.symbol] = float(p.qty)
+        except Exception:
+            result[p.symbol] = 0.0
+    return result
+
+def place_buy(trading_client, symbol: str, notional: float):
+    if notional <= 0:
+        return
+    order = MarketOrderRequest(
+        symbol=symbol,
+        notional=round(notional, 2),
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+    )
+    trading_client.submit_order(order_data=order)
+
+def place_sell(trading_client, symbol: str, qty: float):
+    if qty <= 0:
+        return
+    order = MarketOrderRequest(
+        symbol=symbol,
+        qty=qty,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.DAY,
+    )
+    trading_client.submit_order(order_data=order)
+
+def market_is_open_now():
+    now = datetime.now(ET)
+    return now.weekday() < 5 and ((now.hour > 9 or (now.hour == 9 and now.minute >= 29)) and (now.hour < 16))
+
+def main():
+    trading_client, data_client, account_mode = get_clients()
+    log(f"Starting {ENGINE_LABEL} | {INDUSTRY} | {PORTFOLIO} | {account_mode} | tickers={TICKERS}")
+
+    while True:
+        try:
+            acct = trading_client.get_account()
+            equity = float(acct.equity)
+            cash = float(acct.cash)
+            positions = current_positions(trading_client)
+
+            analyzed = []
+            for sym in TICKERS:
+                sig = fetch_signal(data_client, sym)
+                if sig is not None:
+                    analyzed.append((sym, sig))
+
+            valid = [(sym, sig) for sym, sig in analyzed if sig["buy"]]
+            valid.sort(key=lambda x: x[1]["strength"], reverse=True)
+
+            top = valid[:3] if valid else []
+            top_symbols = [sym for sym, _ in top]
+
+            status_lines = [
+                f"{ENGINE_LABEL}",
+                f"Industry: {INDUSTRY}",
+                f"Portfolio: {PORTFOLIO}",
+                f"Mode: {account_mode}",
+                f"Universe: {', '.join(TICKERS)}",
+                f"Selected: {', '.join(top_symbols) if top_symbols else 'None'}",
+                "",
+                f"Equity: \${equity:,.2f}",
+                f"Cash: \${cash:,.2f}",
+                "",
+            ]
+
+            for sym, sig in analyzed:
+                state = "BUY" if sig["buy"] else "SELL"
+                picked = " [IN PORTFOLIO]" if sym in top_symbols else ""
+                status_lines.append(
+                    f"{sym}: {state} | Price \${sig['price']:.2f} | SMA10 \${sig['sma10']:.2f} | SMA20 \${sig['sma20']:.2f} | SMA50 \${sig['sma50']:.2f}{picked}"
+                )
+
+            write_status(status_lines)
+
+            if market_is_open_now():
+                allocation = equity / max(len(top_symbols), 1) if top_symbols else 0.0
+
+                for sym in TICKERS:
+                    qty = positions.get(sym, 0.0)
+
+                    if sym in top_symbols and qty <= 0:
+                        log(f"BUY {sym} | allocation={allocation:.2f}")
+                        place_buy(trading_client, sym, allocation)
+                    elif sym not in top_symbols and qty > 0:
+                        log(f"SELL {sym} | qty={qty}")
+                        place_sell(trading_client, sym, qty)
+
+            time.sleep(60)
+
+        except Exception as e:
+            log(f"ERROR: {e}")
+            log(traceback.format_exc())
+            time.sleep(30)
+
+if __name__ == "__main__":
+    main()
+PY
+EOF
+
+  chmod +x "$out"
+  printf '%s\n' "$out"
+}
+
 copy_engines_from_wix_to_vm() {
   local ip="$1"
   local key_path="${HOME}/.ssh/${KEY_NAME}"
@@ -770,6 +1025,27 @@ copy_engines_from_wix_to_vm() {
   done
 
   ui_ok "Engine transfer complete"
+}
+
+upload_local_custom_engine_to_vm() {
+  local ip="$1"
+  local local_engine_path="$2"
+  local key_path="${HOME}/.ssh/${KEY_NAME}"
+  local remote_home="/home/${REMOTE_USER}"
+
+  [ -f "$local_engine_path" ] || ui_die "Local custom engine not found: $local_engine_path"
+
+  ui_step "[10.5/12] Uploading local CSTM"
+
+  scp -q -i "${key_path}" -o StrictHostKeyChecking=accept-new \
+    "$local_engine_path" "${REMOTE_USER}@${ip}:${remote_home}/CSTM" \
+    || ui_die "Failed to upload local CSTM"
+
+  ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new \
+    "${REMOTE_USER}@${ip}" "chmod +x '${remote_home}/CSTM'" \
+    >/dev/null 2>&1 || true
+
+  ui_ok "Local CSTM uploaded"
 }
 
 CFG_DIR="${HOME}/.config/algora1_setup"
@@ -1499,7 +1775,7 @@ case "${TERM:-}" in
   screen|screen-bce) export TERM="screen-256color" ;;
 esac
 
-ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
+ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" "CSTM" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
@@ -1524,6 +1800,8 @@ TSLA — Tesla engine with signal-based deployment and downside controls.
 NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
+
+CSTM — Custom local engine built from your selected industry and portfolio type.
 
 EOT
 }
@@ -1592,7 +1870,7 @@ engine_running_anywhere() {
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA" || cmd=="CUSTOM_ENGINE") {
+      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA" || cmd=="CSTM") {
         found=1
         exit 0
       }
@@ -1654,7 +1932,7 @@ write_custom_engine() {
   INDUSTRY_B64="$(printf '%s' "$industry" | base64 | tr -d '\n')"
   PORTFOLIO_B64="$(printf '%s' "$portfolio" | base64 | tr -d '\n')"
 
-  cat > "$HOME/CUSTOM_ENGINE" <<'CUSTOM_ENGINE_EOF'
+  cat > "$HOME/CSTM" <<'CSTM_EOF'
 #!/usr/bin/env python3
 import os
 import time
@@ -1857,9 +2135,9 @@ def main():
 
 if __name__ == "__main__":
     main()
-CUSTOM_ENGINE_EOF
+CSTM_EOF
 
-  chmod +x "$HOME/CUSTOM_ENGINE"
+  chmod +x "$HOME/CSTM"
 
   export ENGINE_LABEL_B64 TICKER_CSV_B64 INDUSTRY_B64 PORTFOLIO_B64
 }
@@ -1878,7 +2156,7 @@ run_custom_from_config() {
   [ -n "${TICKER_CSV:-}" ] || { warn "Missing TICKER_CSV in config."; return 1; }
 
   write_custom_engine "$ENGINE_LABEL" "$TICKER_CSV" "$INDUSTRY" "$PORTFOLIO"
-  chmod +x "$HOME/CUSTOM_ENGINE" >/dev/null 2>&1 || true
+  chmod +x "$HOME/CSTM" >/dev/null 2>&1 || true
 
   ok "Custom engine created: $ENGINE_LABEL"
 
@@ -1890,7 +2168,7 @@ run_custom_from_config() {
     TICKER_CSV_B64="$TICKER_CSV_B64" \
     INDUSTRY_B64="$INDUSTRY_B64" \
     PORTFOLIO_B64="$PORTFOLIO_B64" \
-    "$HOME/CUSTOM_ENGINE"
+    "$HOME/CSTM"
 }
 
 run_engine_prompt_if_safe() {
@@ -1907,7 +2185,7 @@ run_engine_prompt_if_safe() {
 
   printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
-  chmod +x "./${engine}" >/dev/null 2>&1 || true
+  chmod +x "$HOME/${engine}" >/dev/null 2>&1 || true
 
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
@@ -1927,7 +2205,7 @@ run_engine_prompt_if_safe() {
     return 0
   fi
 
-  "./${engine}"
+  "$HOME/${engine}"
   return 0
 }
 
@@ -2974,8 +3252,8 @@ create_guided_session() {
 }
 
 engine_running_anywhere() {
-  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA|CUSTOM_ENGINE)( |$)' >/dev/null 2>&1 && return 0
-  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CUSTOM_ENGINE)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -3050,7 +3328,7 @@ log_for_engine() {
     TSLA) echo "tsla_investing.log" ;;
     NVDA) echo "nvda_investing.log" ;;
     PMNY) echo "pmny_investing.log" ;;
-    CUSTOM_ENGINE) echo "custom_engine_investing.log" ;;
+    CSTM) echo "custom_engine_investing.log" ;;
     *) echo "custom_engine_investing.log" ;;
   esac
 }
@@ -3061,7 +3339,7 @@ live_status_for_engine() {
     TSLA) echo "tsla_live_status.txt" ;;
     NVDA) echo "nvda_live_status.txt" ;;
     PMNY) echo "pmny_live_status.txt" ;;
-    CUSTOM_ENGINE) echo "custom_engine_live_status.txt" ;;
+    CSTM) echo "custom_engine_live_status.txt" ;;
     *) echo "custom_engine_live_status.txt" ;;
   esac
 }
@@ -3071,7 +3349,7 @@ detect_running_engine_best_effort() {
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY" || cmd=="CUSTOM_ENGINE") {
+      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY" || cmd=="CSTM") {
         print cmd
         found=1
         exit 0
@@ -3109,7 +3387,6 @@ running_sessions_menu() {
     local action
     action="$(choose "Running session" \
       "Launch Pre-Made Engine" \
-      "Create Engine (Guided)" \
       "Back")"
     [ "$action" != "Back" ] || return 0
 
@@ -3478,7 +3755,7 @@ install_plan_confirm() {
     "Project" "${PROJECT_ID}" \
     "Zone" "${ZONE}" \
     "Machine" "${MACHINE_TYPE}" \
-    "Engines" "BEXP, TSLA, NVDA, PMNY"
+    "Engines" "BEXP, TSLA, NVDA, PMNY, CSTM"
 
   local choice
   choice="$(ui_choose "Proceed?" "Continue" "Exit")"
@@ -3549,10 +3826,46 @@ main() {
   ensure_credentials_tui
   save_cfg
 
+  local custom_choice=""
+  local custom_industry=""
+  local custom_portfolio=""
+  local local_custom_engine_path=""
+
+  custom_choice="$(ui_choose "Create a custom engine locally?" "No" "Yes")"
+
+  if [ "$custom_choice" = "Yes" ]; then
+    custom_industry="$(ui_choose "Select industry" \
+      "Information Technology" \
+      "Health Care" \
+      "Financials" \
+      "Consumer Discretionary" \
+      "Communication Services" \
+      "Industrials" \
+      "Consumer Staples" \
+      "Energy" \
+      "Diversify Exposure")"
+
+    custom_portfolio="$(ui_choose "Select portfolio type" \
+      "Growth — Highest return (CAGR / Total Return)" \
+      "Stability — Lowest risk (Max Drawdown / Volatility)" \
+      "Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)")"
+
+    local_custom_engine_path="$(build_local_custom_engine_file \
+      "$custom_industry" \
+      "$custom_portfolio" \
+      "Custom Engine")"
+
+    ui_ok "Built local custom engine: $local_custom_engine_path"
+  fi
+
   write_exports_on_vm "${ip}"
   customize_motd_on_vm "${ip}"
 
   copy_engines_from_wix_to_vm "${ip}"
+
+  if [ -n "${local_custom_engine_path:-}" ]; then
+    upload_local_custom_engine_to_vm "${ip}" "${local_custom_engine_path}"
+  fi
 
   install_control_panel_on_vm "${ip}"
 
