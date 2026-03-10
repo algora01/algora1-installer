@@ -1649,15 +1649,10 @@ write_custom_engine() {
   local industry="$3"
   local portfolio="$4"
 
-  local ENGINE_LABEL_B64
-  local TICKER_CSV_B64
-  local INDUSTRY_B64
-  local PORTFOLIO_B64
-
-  ENGINE_LABEL_B64="$(printf '%s' "$engine_label" | base64)"
-  TICKER_CSV_B64="$(printf '%s' "$ticker_csv" | base64)"
-  INDUSTRY_B64="$(printf '%s' "$industry" | base64)"
-  PORTFOLIO_B64="$(printf '%s' "$portfolio" | base64)"
+  ENGINE_LABEL_B64="$(printf '%s' "$engine_label" | base64 | tr -d '\n')"
+  TICKER_CSV_B64="$(printf '%s' "$ticker_csv" | base64 | tr -d '\n')"
+  INDUSTRY_B64="$(printf '%s' "$industry" | base64 | tr -d '\n')"
+  PORTFOLIO_B64="$(printf '%s' "$portfolio" | base64 | tr -d '\n')"
 
   cat > "$HOME/CUSTOM_ENGINE" <<'CUSTOM_ENGINE_EOF'
 #!/usr/bin/env python3
