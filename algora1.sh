@@ -1355,11 +1355,11 @@ ensure_credentials_tui() {
     return
   fi
 
-  ui_info "Enter Alpaca LIVE credentials (used by BEXP/TSLA/NVDA)."
+  ui_info "Enter Alpaca LIVE credentials"
   ALPACA_LIVE_API_KEY="$(ui_input_plain "ALPACA_LIVE_API_KEY:")"
   ALPACA_LIVE_SECRET_KEY="$(ui_input_plain "ALPACA_LIVE_SECRET_KEY:")"
 
-  ui_info "Enter Alpaca PAPER credentials (used by PMNY)."
+  ui_info "Enter Alpaca PAPER credentials"
   ALPACA_PAPER_API_KEY="$(ui_input_plain "ALPACA_PAPER_API_KEY:")"
   ALPACA_PAPER_SECRET_KEY="$(ui_input_plain "ALPACA_PAPER_SECRET_KEY:")"
 
