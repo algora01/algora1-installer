@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8938e5f952f4407ebcd86db467ad4776.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_31cb2de026954e34ac168796d6bac05c.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_9b64c73a96b145689c35f8a6792d7372.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_c3afc58e0f52431b9dfac775a365b9a1.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ab6227986dd54662a8278789faa899d7.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4f2498a001f94266b46a0458e41a8d1c.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_8b54d94eac53497f879f585fe1caaaf0.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_538d0582c82d4ea9816c06c9a10930f2.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -541,12 +541,12 @@ ensure_macos_app_bundle_present() {
   local desktop_app="${HOME}/Desktop/ALGORA1.app"
 
   if is_trusted_algora1_app_bundle "$app_root"; then
-    ui_ok "macOS app bundle already present: $app_root"
+    ui_ok "macOS app bundle present: $app_root"
     return 0
   fi
 
   if is_trusted_algora1_app_bundle "$desktop_app"; then
-    ui_ok "macOS app bundle already present: $desktop_app"
+    ui_ok "macOS app bundle present: $desktop_app"
     return 0
   fi
 
@@ -1211,29 +1211,77 @@ create_instance_if_needed() {
   local ssh_metadata
   ssh_metadata="${REMOTE_USER}:$(cat "$key_pub")"
 
-  ui_info "Creating VM '${INSTANCE_NAME}' in ${ZONE}…"
-  local create_err
-  create_err="$(mktemp)"
-  if ! gcloud compute instances create "${INSTANCE_NAME}" \
-    --zone "${ZONE}" \
-    --machine-type "${MACHINE_TYPE}" \
-    --image-family "${IMAGE_FAMILY}" \
-    --image-project "${IMAGE_PROJECT}" \
-    --metadata "ssh-keys=${ssh_metadata}" \
-    --tags "ssh" \
-    --quiet \
-    >/dev/null 2>"${create_err}"; then
-    ui_warn "VM provisioning failed at [7/12]."
-    if [ -s "${create_err}" ]; then
-      ui_warn "gcloud error:"
-      sed -n '1,20p' "${create_err}" >&2 || true
-    fi
-    rm -f "${create_err}" >/dev/null 2>&1 || true
-    ui_die "Could not create VM. Check quota, zone capacity, machine type, and billing."
-  fi
-  rm -f "${create_err}" >/dev/null 2>&1 || true
+  local requested_zone="${ZONE}"
+  local requested_machine_type="${MACHINE_TYPE}"
+  local -a candidate_zones=()
+  local -a candidate_machine_types=()
+  local zone_suffix
+  local zone_choice
+  local machine_choice
+  local created="0"
+  local last_create_err=""
 
-  ui_ok "Instance created"
+  candidate_zones+=("${requested_zone}")
+  for zone_suffix in c b f a; do
+    zone_choice="${REGION}-${zone_suffix}"
+    if [ "${zone_choice}" != "${requested_zone}" ]; then
+      candidate_zones+=("${zone_choice}")
+    fi
+  done
+
+  candidate_machine_types+=("${requested_machine_type}")
+  for machine_choice in e2-medium e2-standard-2 e2-small; do
+    if [ "${machine_choice}" != "${requested_machine_type}" ]; then
+      candidate_machine_types+=("${machine_choice}")
+    fi
+  done
+
+  for zone_choice in "${candidate_zones[@]}"; do
+    for machine_choice in "${candidate_machine_types[@]}"; do
+      ui_info "Creating VM '${INSTANCE_NAME}' in ${zone_choice} (${machine_choice})…"
+      local create_err
+      create_err="$(mktemp)"
+      if gcloud compute instances create "${INSTANCE_NAME}"         --zone "${zone_choice}"         --machine-type "${machine_choice}"         --image-family "${IMAGE_FAMILY}"         --image-project "${IMAGE_PROJECT}"         --metadata "ssh-keys=${ssh_metadata}"         --tags "ssh"         --quiet         >/dev/null 2>"${create_err}"; then
+        ZONE="${zone_choice}"
+        MACHINE_TYPE="${machine_choice}"
+        created="1"
+        rm -f "${create_err}" >/dev/null 2>&1 || true
+        break 2
+      fi
+
+      last_create_err="${create_err}"
+      if grep -Eq 'ZONE_RESOURCE_POOL_EXHAUSTED|does not have enough resources available|resource pool exhausted' "${create_err}" 2>/dev/null; then
+        ui_warn "Capacity unavailable in ${zone_choice} (${machine_choice}); trying another zone/hardware configuration…"
+      elif grep -Eq 'does not exist in zone|Invalid value for field .resource.machineType.' "${create_err}" 2>/dev/null; then
+        ui_warn "${machine_choice} is not available in ${zone_choice}; trying another configuration…"
+      else
+        ui_warn "VM provisioning failed at [7/12]."
+        if [ -s "${create_err}" ]; then
+          ui_warn "gcloud error:"
+          sed -n '1,20p' "${create_err}" >&2 || true
+        fi
+        rm -f "${create_err}" >/dev/null 2>&1 || true
+        ui_die "Could not create VM. Check quota, zone capacity, machine type, and billing."
+      fi
+      rm -f "${create_err}" >/dev/null 2>&1 || true
+    done
+  done
+
+  if [ "${created}" != "1" ]; then
+    ui_warn "VM provisioning failed at [7/12]."
+    if [ -n "${last_create_err}" ] && [ -s "${last_create_err}" ]; then
+      ui_warn "gcloud error:"
+      sed -n '1,20p' "${last_create_err}" >&2 || true
+    fi
+    rm -f "${last_create_err}" >/dev/null 2>&1 || true
+    ui_die "Could not create VM after trying multiple zones and machine types. Check quota, zone capacity, machine type, and billing."
+  fi
+
+  if [ "${ZONE}" != "${requested_zone}" ] || [ "${MACHINE_TYPE}" != "${requested_machine_type}" ]; then
+    ui_ok "Instance created using fallback configuration: ${ZONE} (${MACHINE_TYPE})"
+  else
+    ui_ok "Instance created"
+  fi
 }
 
 get_instance_ip() {
