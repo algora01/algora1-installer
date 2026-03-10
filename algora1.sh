@@ -381,18 +381,14 @@ install_local_cli() {
 
   local target="$target_dir/algora1"
 
-  if [ "${0##*/}" = "bash" ] || [ "${0##*/}" = "sh" ] || [ ! -f "${0}" ]; then
-    : "${ALGORA1_INSTALL_URL:=https://raw.githubusercontent.com/algora01/algora1-installer/main/algora1.sh}"
-    need_cmd curl || ui_die "curl is required to install the local command."
-
-    ui_info "Installing local command by downloading from ${ALGORA1_INSTALL_URL}"
-    curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" || ui_die "Failed to download installer."
-    chmod +x "${target}"
-    ui_ok "Installed local command: ${target}"
-  else
-    local self
+  local self=""
+  if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  elif [ -f "${0:-}" ]; then
     self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  fi
 
+  if [ -n "$self" ] && [ -f "$self" ]; then
     if [ "$self" != "$target" ]; then
       cp -f "$self" "$target"
       chmod +x "$target"
@@ -400,6 +396,14 @@ install_local_cli() {
     else
       ui_ok "Local command already installed: $target"
     fi
+  else
+    : "${ALGORA1_INSTALL_URL:=https://raw.githubusercontent.com/algora01/algora1-installer/main/algora1.sh}"
+    need_cmd curl || ui_die "curl is required to install the local command."
+
+    ui_info "Installing local command by downloading from ${ALGORA1_INSTALL_URL}"
+    curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" || ui_die "Failed to download installer."
+    chmod +x "${target}"
+    ui_ok "Installed local command: ${target}"
   fi
 
   ui_info "Add this to your shell profile if needed:"
