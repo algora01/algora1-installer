@@ -284,6 +284,14 @@ ui_input() {
   fi
 }
 
+ui_input_plain() {
+  local prompt="$1"
+  printf "%s " "$prompt" >&2
+  local v=""
+  IFS= read -r v || true
+  printf "%s\n" "$v"
+}
+
 ui_secret() {
   local prompt="$1"
   if ui_has_gum; then
@@ -1348,12 +1356,12 @@ ensure_credentials_tui() {
   fi
 
   ui_info "Enter Alpaca LIVE credentials (used by BEXP/TSLA/NVDA)."
-  ALPACA_LIVE_API_KEY="$(ui_input "ALPACA_LIVE_API_KEY:")"
-  ALPACA_LIVE_SECRET_KEY="$(ui_secret "ALPACA_LIVE_SECRET_KEY:")"
+  ALPACA_LIVE_API_KEY="$(ui_input_plain "ALPACA_LIVE_API_KEY:")"
+  ALPACA_LIVE_SECRET_KEY="$(ui_input_plain "ALPACA_LIVE_SECRET_KEY:")"
 
   ui_info "Enter Alpaca PAPER credentials (used by PMNY)."
-  ALPACA_PAPER_API_KEY="$(ui_input "ALPACA_PAPER_API_KEY:")"
-  ALPACA_PAPER_SECRET_KEY="$(ui_secret "ALPACA_PAPER_SECRET_KEY:")"
+  ALPACA_PAPER_API_KEY="$(ui_input_plain "ALPACA_PAPER_API_KEY:")"
+  ALPACA_PAPER_SECRET_KEY="$(ui_input_plain "ALPACA_PAPER_SECRET_KEY:")"
 
   [ -n "${ALPACA_LIVE_API_KEY}" ] || ui_die "ALPACA_LIVE_API_KEY cannot be empty."
   [ -n "${ALPACA_LIVE_SECRET_KEY}" ] || ui_die "ALPACA_LIVE_SECRET_KEY cannot be empty."
@@ -1655,7 +1663,7 @@ write_custom_engine() {
   local industry="$3"
   local portfolio="$4"
 
-  cat > "$HOME/CUSTOM_ENGINE" <<'CUSTOM_ENGINE_EOF'
+  cat > "$HOME/CUSTOM_ENGINE" <<CUSTOM_ENGINE_EOF
 #!/usr/bin/env python3
 import os
 import time
@@ -1857,6 +1865,8 @@ CUSTOM_ENGINE_EOF
 }
 
 create_guided_session() {
+  local engine_label="${1:-Custom Engine}"
+
   local industry
   industry="$(prompt_industry)"
   [ -n "$industry" ] || return 1
@@ -1866,10 +1876,6 @@ create_guided_session() {
   portfolio="$(prompt_portfolio_type)"
   [ -n "$portfolio" ] || return 1
   [ "$portfolio" != "Back" ] || return 1
-
-  local engine_label
-  engine_label="$(input "Engine name:")"
-  engine_label="${engine_label:-Custom Engine}"
 
   local ticker_csv
   ticker_csv="$(ticker_csv_for_choice "$industry" "$portfolio")"
@@ -1895,16 +1901,10 @@ run_engine_prompt_if_safe() {
     return 0
   fi
 
-  local action
-  action="$(choose "Run investment engine?" "Run pre-made engine" "Back")"
-
-  if [ "$action" != "Run pre-made engine" ]; then
-    return 1
-  fi
-
   local engine
-  engine="$(choose "Select engine" "${ENGINE_NAMES[@]}")"
+  engine="$(choose "Select pre-made engine" "${ENGINE_NAMES[@]}" "Back")"
   [ -n "$engine" ] || return 1
+  [ "$engine" != "Back" ] || return 1
 
   printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
@@ -1913,12 +1913,11 @@ run_engine_prompt_if_safe() {
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
 
+  local -a missing=()
   if [ "$engine" = "PMNY" ]; then
-    missing=()
     [ -n "${ALPACA_PAPER_API_KEY:-}" ] || missing+=("ALPACA_PAPER_API_KEY")
     [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || missing+=("ALPACA_PAPER_SECRET_KEY")
   else
-    missing=()
     [ -n "${ALPACA_LIVE_API_KEY:-}" ] || missing+=("ALPACA_LIVE_API_KEY")
     [ -n "${ALPACA_LIVE_SECRET_KEY:-}" ] || missing+=("ALPACA_LIVE_SECRET_KEY")
   fi
@@ -1936,6 +1935,12 @@ run_engine_prompt_if_safe() {
 printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
 SESSION_MODE="${1:-premade}"
+ENGINE_LABEL_ARG="${2:-Custom Engine}"
+
+if [ "$SESSION_MODE" = "--guided" ]; then
+  create_guided_session "$ENGINE_LABEL_ARG" || exit 0
+  exit 0
+fi
 
 if has_gum; then
   gum style --border rounded --padding "1 2" --border-foreground 39 \
@@ -1948,15 +1953,10 @@ echo "" >&2
 print_engine_blurbs
 echo "" >&2
 
-if [ "$SESSION_MODE" = "--guided" ]; then
-  create_guided_session || exit 0
-  exit 0
+if run_engine_prompt_if_safe; then
+  exec bash -l
 else
-  if run_engine_prompt_if_safe; then
-    exec bash -l
-  else
-    exit 0
-  fi
+  exit 0
 fi
 SESSION
 
@@ -2968,7 +2968,7 @@ create_new_session() {
 
 create_guided_session() {
   local name="$1"
-  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session --guided"
+  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session --guided $(printf '%q' "$name")"
 }
 
 engine_running_anywhere() {
