@@ -1869,51 +1869,23 @@ CUSTOM_ENGINE_EOF
   export ENGINE_LABEL_B64 TICKER_CSV_B64 INDUSTRY_B64 PORTFOLIO_B64
 }
 
-create_guided_session() {
-  local engine_label="${1:-Custom Engine}"
-  local industry=""
-  local portfolio=""
-  local ticker_csv=""
+run_custom_from_config() {
+  local config_path="${1:-}"
+  [ -n "$config_path" ] || { warn "Missing custom config path."; return 1; }
+  [ -f "$config_path" ] || { warn "Custom config not found: $config_path"; return 1; }
 
-  while true; do
-    draw_session_header
-    industry="$(prompt_industry || true)"
-    [ -n "$industry" ] || return 1
+  # shellcheck disable=SC1090
+  source "$config_path"
 
-    if [ "$industry" = "Back" ]; then
-      return 1
-    fi
+  [ -n "${ENGINE_LABEL:-}" ] || { warn "Missing ENGINE_LABEL in config."; return 1; }
+  [ -n "${INDUSTRY:-}" ] || { warn "Missing INDUSTRY in config."; return 1; }
+  [ -n "${PORTFOLIO:-}" ] || { warn "Missing PORTFOLIO in config."; return 1; }
+  [ -n "${TICKER_CSV:-}" ] || { warn "Missing TICKER_CSV in config."; return 1; }
 
-    break
-  done
-
-  while true; do
-    draw_session_header
-    portfolio="$(prompt_portfolio_type || true)"
-    [ -n "$portfolio" ] || return 1
-
-    if [ "$portfolio" = "Back" ]; then
-      draw_session_header
-      industry="$(prompt_industry || true)"
-      [ -n "$industry" ] || return 1
-      [ "$industry" != "Back" ] || return 1
-      continue
-    fi
-
-    break
-  done
-
-  ticker_csv="$(ticker_csv_for_choice "$industry" "$portfolio")"
-  if [ -z "$ticker_csv" ]; then
-    warn "No ticker mapping found for that selection."
-    sleep 1
-    return 1
-  fi
-
-  write_custom_engine "$engine_label" "$ticker_csv" "$industry" "$portfolio"
+  write_custom_engine "$ENGINE_LABEL" "$TICKER_CSV" "$INDUSTRY" "$PORTFOLIO"
   chmod +x "$HOME/CUSTOM_ENGINE" >/dev/null 2>&1 || true
 
-  ok "Guided engine created: $engine_label"
+  ok "Custom engine created: $ENGINE_LABEL"
 
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
@@ -1967,10 +1939,10 @@ run_engine_prompt_if_safe() {
 printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
 SESSION_MODE="${1:-premade}"
-ENGINE_LABEL_ARG="${2:-Custom Engine}"
+CONFIG_PATH="${2:-}"
 
-if [ "$SESSION_MODE" = "--guided" ]; then
-  create_guided_session "$ENGINE_LABEL_ARG" || exit 0
+if [ "$SESSION_MODE" = "--custom-config" ]; then
+  run_custom_from_config "$CONFIG_PATH" || exit 0
   exit 0
 fi
 
@@ -2993,13 +2965,78 @@ create_new_session() {
 
 create_guided_session() {
   local name="$1"
-  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session --guided $(printf '%q' "$name")"
+  local config_path="$2"
+  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session --custom-config $(printf '%q' "$config_path")"
 }
 
 engine_running_anywhere() {
   pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA|CUSTOM_ENGINE)( |$)' >/dev/null 2>&1 && return 0
   pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CUSTOM_ENGINE)( |$)' >/dev/null 2>&1 && return 0
   return 1
+}
+
+prompt_industry() {
+  choose "Select industry" \
+    "Information Technology" \
+    "Health Care" \
+    "Financials" \
+    "Consumer Discretionary" \
+    "Communication Services" \
+    "Industrials" \
+    "Consumer Staples" \
+    "Energy" \
+    "Diversify Exposure" \
+    "Back"
+}
+
+prompt_portfolio_type() {
+  choose "Select portfolio type" \
+    "Growth — Highest return (CAGR / Total Return)" \
+    "Stability — Lowest risk (Max Drawdown / Volatility)" \
+    "Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)" \
+    "Back"
+}
+
+ticker_csv_for_choice() {
+  local industry="$1"
+  local portfolio="$2"
+
+  case "$industry" in
+    "Information Technology") echo "MSFT,NVDA,AVGO,ORCL,ADBE,CRM,AMD,INTU,IBM,PLTR,CSCO,TXN,QCOM" ;;
+    "Health Care") echo "LLY,UNH,JNJ,ABBV,MRK,ISRG,ABT,TMO,AMGN,PFE" ;;
+    "Financials") echo "BRK.B,JPM,GS,MS,BLK,AXP,SCHW,C,USB,PNC" ;;
+    "Consumer Discretionary") echo "AMZN,TSLA,HD,MCD,SBUX,NKE,LOW,BKNG,TJX,CMG" ;;
+    "Communication Services") echo "GOOG,META,NFLX,TMUS,CMCSA,DIS,CHTR" ;;
+    "Industrials") echo "GE,CAT,HON,UNP,RTX,DE,ETN,LMT,UPS,UBER" ;;
+    "Consumer Staples") echo "COST,WMT,PG,KO,PEP,MDLZ,PM,CL" ;;
+    "Energy") echo "XOM,CVX,SLB,EOG,MPC,PSX,KMI" ;;
+    "Diversify Exposure") echo "MSFT,NVDA,GOOG,AMZN,LLY,JPM,GE,PG,XOM,META" ;;
+    *) echo "" ;;
+  esac
+}
+
+write_custom_config() {
+  local session_name="$1"
+  local engine_label="$2"
+  local industry="$3"
+  local portfolio="$4"
+  local ticker_csv="$5"
+
+  local dir="$HOME/.algora1_custom"
+  local cfg="$dir/${session_name}.env"
+
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+
+  cat > "$cfg" <<EOF
+ENGINE_LABEL=$(printf '%q' "$engine_label")
+INDUSTRY=$(printf '%q' "$industry")
+PORTFOLIO=$(printf '%q' "$portfolio")
+TICKER_CSV=$(printf '%q' "$ticker_csv")
+EOF
+
+  chmod 600 "$cfg"
+  printf '%s\n' "$cfg"
 }
 
 # ---- logs ----
@@ -3072,13 +3109,14 @@ running_sessions_menu() {
       "Back")"
     [ "$action" != "Back" ] || return 0
 
-    # Enforce no session exists
     if has_any_session; then
       warn "A session already exists. Delete it first."
       return 0
     fi
 
     local name default_name
+    local industry portfolio ticker_csv config_path
+
     echo "" >&2
 
     if [ "$action" = "Launch Pre-Made Engine" ]; then
@@ -3095,7 +3133,23 @@ running_sessions_menu() {
     if [ "$action" = "Launch Pre-Made Engine" ]; then
       create_new_session "$name"
     else
-      create_guided_session "$name" || return 0
+      hard_clear
+      draw_header_once
+      industry="$(prompt_industry || true)"
+      [ -n "$industry" ] || return 0
+      [ "$industry" != "Back" ] || return 0
+
+      hard_clear
+      draw_header_once
+      portfolio="$(prompt_portfolio_type || true)"
+      [ -n "$portfolio" ] || return 0
+      [ "$portfolio" != "Back" ] || return 0
+
+      ticker_csv="$(ticker_csv_for_choice "$industry" "$portfolio")"
+      [ -n "$ticker_csv" ] || { warn "No ticker mapping found."; return 0; }
+
+      config_path="$(write_custom_config "$name" "$name" "$industry" "$portfolio" "$ticker_csv")"
+      create_guided_session "$name" "$config_path" || return 0
     fi
 
     hard_clear
