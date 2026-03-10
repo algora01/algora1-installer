@@ -1612,15 +1612,15 @@ prompt_industry() {
     "Consumer Staples" \
     "Energy" \
     "Diversify Exposure" \
-    "Back"
+    "Back" || return 1
 }
 
 prompt_portfolio_type() {
   choose "Select portfolio type" \
     "Growth — Highest return (CAGR / Total Return)" \
-    "Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)" \
+    "Stability — Lowest risk (Max Drawdown / Volatility)" \
     "Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)" \
-    "Back"
+    "Back" || return 1
 }
 
 ticker_csv_for_choice() {
@@ -1648,6 +1648,11 @@ write_custom_engine() {
   local ticker_csv="$2"
   local industry="$3"
   local portfolio="$4"
+
+  local ENGINE_LABEL_B64
+  local TICKER_CSV_B64
+  local INDUSTRY_B64
+  local PORTFOLIO_B64
 
   ENGINE_LABEL_B64="$(printf '%s' "$engine_label" | base64)"
   TICKER_CSV_B64="$(printf '%s' "$ticker_csv" | base64)"
@@ -1866,23 +1871,42 @@ CUSTOM_ENGINE_EOF
 
 create_guided_session() {
   local engine_label="${1:-Custom Engine}"
+  local industry=""
+  local portfolio=""
+  local ticker_csv=""
 
-  draw_session_header
+  while true; do
+    draw_session_header
+    industry="$(prompt_industry || true)"
+    [ -n "$industry" ] || return 1
 
-  local industry
-  industry="$(prompt_industry)"
-  [ -n "$industry" ] || return 1
-  [ "$industry" != "Back" ] || return 1
+    if [ "$industry" = "Back" ]; then
+      return 1
+    fi
 
-  local portfolio
-  portfolio="$(prompt_portfolio_type)"
-  [ -n "$portfolio" ] || return 1
-  [ "$portfolio" != "Back" ] || return 1
+    break
+  done
 
-  local ticker_csv
+  while true; do
+    draw_session_header
+    portfolio="$(prompt_portfolio_type || true)"
+    [ -n "$portfolio" ] || return 1
+
+    if [ "$portfolio" = "Back" ]; then
+      draw_session_header
+      industry="$(prompt_industry || true)"
+      [ -n "$industry" ] || return 1
+      [ "$industry" != "Back" ] || return 1
+      continue
+    fi
+
+    break
+  done
+
   ticker_csv="$(ticker_csv_for_choice "$industry" "$portfolio")"
   if [ -z "$ticker_csv" ]; then
     warn "No ticker mapping found for that selection."
+    sleep 1
     return 1
   fi
 
@@ -1894,7 +1918,12 @@ create_guided_session() {
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
 
-  exec "$HOME/CUSTOM_ENGINE"
+  exec env \
+    ENGINE_LABEL_B64="$ENGINE_LABEL_B64" \
+    TICKER_CSV_B64="$TICKER_CSV_B64" \
+    INDUSTRY_B64="$INDUSTRY_B64" \
+    PORTFOLIO_B64="$PORTFOLIO_B64" \
+    "$HOME/CUSTOM_ENGINE"
 }
 
 run_engine_prompt_if_safe() {
@@ -3049,10 +3078,17 @@ running_sessions_menu() {
       return 0
     fi
 
-    local name
+    local name default_name
     echo "" >&2
-    name="$(input "Session name (default: investing):")"
-    name="${name:-investing}"
+
+    if [ "$action" = "Launch Pre-Made Engine" ]; then
+      default_name="investing"
+    else
+      default_name="custom"
+    fi
+
+    name="$(input "Session name (default: ${default_name}):")"
+    name="${name:-$default_name}"
     name="$(echo "$name" | tr -d '[:space:]')"
     [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name. Use letters/numbers/_/- only."; return 0; }
 
