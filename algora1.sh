@@ -8,8 +8,8 @@ INSTANCE_NAME="algora1"
 KEY_NAME="ssh_key1"
 
 REGION_DEFAULT="us-central1"
-ZONE_DEFAULT="us-central1-c"
-MACHINE_TYPE_DEFAULT="e2-custom-1-3072"
+ZONE_DEFAULT="us-central1-b"
+MACHINE_TYPE_DEFAULT="e2-medium"
 
 IMAGE_FAMILY="ubuntu-2404-lts-amd64"
 IMAGE_PROJECT="ubuntu-os-cloud"
@@ -1215,25 +1215,36 @@ create_instance_if_needed() {
   local requested_machine_type="${MACHINE_TYPE}"
   local -a candidate_zones=()
   local -a candidate_machine_types=()
+  local -a candidate_regions=()
+  local region_choice
   local zone_suffix
   local zone_choice
   local machine_choice
   local created="0"
   local last_create_err=""
 
-  candidate_zones+=("${requested_zone}")
-  for zone_suffix in c b f a; do
-    zone_choice="${REGION}-${zone_suffix}"
-    if [ "${zone_choice}" != "${requested_zone}" ]; then
-      candidate_zones+=("${zone_choice}")
+  candidate_regions+=("${REGION}")
+  for region_choice in us-central1 us-east1 us-east4 us-west1; do
+    if [ "${region_choice}" != "${REGION}" ]; then
+      candidate_regions+=("${region_choice}")
     fi
   done
 
-  candidate_machine_types+=("${requested_machine_type}")
-  for machine_choice in e2-medium e2-standard-2 e2-small; do
-    if [ "${machine_choice}" != "${requested_machine_type}" ]; then
-      candidate_machine_types+=("${machine_choice}")
-    fi
+  candidate_zones+=("${requested_zone}")
+  for region_choice in "${candidate_regions[@]}"; do
+    for zone_suffix in b c f a d; do
+      zone_choice="${region_choice}-${zone_suffix}"
+      if [ "${zone_choice}" != "${requested_zone}" ]; then
+        candidate_zones+=("${zone_choice}")
+      fi
+    done
+  done
+
+  for machine_choice in e2-medium e2-small e2-standard-2 "${requested_machine_type}"; do
+    case " ${candidate_machine_types[*]} " in
+      *" ${machine_choice} "*) ;;
+      *) candidate_machine_types+=("${machine_choice}") ;;
+    esac
   done
 
   for zone_choice in "${candidate_zones[@]}"; do
