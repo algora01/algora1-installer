@@ -1602,7 +1602,6 @@ engine_running_anywhere() {
 }
 
 prompt_industry() {
-  draw_session_header
   choose "Select industry" \
     "Information Technology" \
     "Health Care" \
@@ -1617,7 +1616,6 @@ prompt_industry() {
 }
 
 prompt_portfolio_type() {
-  draw_session_header
   choose "Select portfolio type" \
     "Growth — Highest return (CAGR / Total Return)" \
     "Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)" \
@@ -1629,42 +1627,16 @@ ticker_csv_for_choice() {
   local industry="$1"
   local portfolio="$2"
 
-  case "${industry}|${portfolio}" in
-    "Information Technology|Growth — Highest return (CAGR / Total Return)") echo "NVDA,PLTR,AVGO" ;;
-    "Information Technology|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "MSFT,ADBE,IBM" ;;
-    "Information Technology|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "MSFT,NVDA,AVGO" ;;
-
-    "Health Care|Growth — Highest return (CAGR / Total Return)") echo "LLY,UNH,ABBV" ;;
-    "Health Care|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "JNJ,UNH,ABBV" ;;
-    "Health Care|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "LLY,JNJ,UNH" ;;
-
-    "Financials|Growth — Highest return (CAGR / Total Return)") echo "BLK,JPM,GS" ;;
-    "Financials|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "BRK.B,JPM,USB" ;;
-    "Financials|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "BLK,JPM,MS" ;;
-
-    "Consumer Discretionary|Growth — Highest return (CAGR / Total Return)") echo "AMZN,TSLA,HD" ;;
-    "Consumer Discretionary|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "MCD,HD,SBUX" ;;
-    "Consumer Discretionary|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "AMZN,HD,MCD" ;;
-
-    "Communication Services|Growth — Highest return (CAGR / Total Return)") echo "META,NFLX,GOOG" ;;
-    "Communication Services|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "GOOG,TMUS,CMCSA" ;;
-    "Communication Services|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "GOOG,META,TMUS" ;;
-
-    "Industrials|Growth — Highest return (CAGR / Total Return)") echo "CAT,GE,UBER" ;;
-    "Industrials|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "HON,UNP,CAT" ;;
-    "Industrials|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "GE,HON,UNP" ;;
-
-    "Consumer Staples|Growth — Highest return (CAGR / Total Return)") echo "COST,WMT,PG" ;;
-    "Consumer Staples|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "PG,KO,PEP" ;;
-    "Consumer Staples|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "COST,PG,WMT" ;;
-
-    "Energy|Growth — Highest return (CAGR / Total Return)") echo "XOM,CVX,CVX" ;;
-    "Energy|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "CVX,XOM,CVX" ;;
-    "Energy|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "XOM,CVX,XOM" ;;
-
-    "Diversify Exposure|Growth — Highest return (CAGR / Total Return)") echo "NVDA,META,AMZN" ;;
-    "Diversify Exposure|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "MSFT,JNJ,PG" ;;
-    "Diversify Exposure|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "MSFT,GOOG,LLY" ;;
+  case "$industry" in
+    "Information Technology") echo "MSFT,NVDA,AVGO,ORCL,ADBE,CRM,AMD,INTU,IBM,PLTR,CSCO,TXN,QCOM" ;;
+    "Health Care") echo "LLY,UNH,JNJ,ABBV,MRK,ISRG,ABT,TMO,AMGN,PFE" ;;
+    "Financials") echo "BRK.B,JPM,GS,MS,BLK,AXP,SCHW,C,USB,PNC" ;;
+    "Consumer Discretionary") echo "AMZN,TSLA,HD,MCD,SBUX,NKE,LOW,BKNG,TJX,CMG" ;;
+    "Communication Services") echo "GOOG,META,NFLX,TMUS,CMCSA,DIS,CHTR" ;;
+    "Industrials") echo "GE,CAT,HON,UNP,RTX,DE,ETN,LMT,UPS,UBER" ;;
+    "Consumer Staples") echo "COST,WMT,PG,KO,PEP,MDLZ,PM,CL" ;;
+    "Energy") echo "XOM,CVX,SLB,EOG,MPC,PSX,KMI" ;;
+    "Diversify Exposure") echo "MSFT,NVDA,GOOG,AMZN,LLY,JPM,GE,PG,XOM,META" ;;
     *)
       echo ""
       ;;
@@ -1677,11 +1649,17 @@ write_custom_engine() {
   local industry="$3"
   local portfolio="$4"
 
-  cat > "$HOME/CUSTOM_ENGINE" <<CUSTOM_ENGINE_EOF
+  ENGINE_LABEL_B64="$(printf '%s' "$engine_label" | base64)"
+  TICKER_CSV_B64="$(printf '%s' "$ticker_csv" | base64)"
+  INDUSTRY_B64="$(printf '%s' "$industry" | base64)"
+  PORTFOLIO_B64="$(printf '%s' "$portfolio" | base64)"
+
+  cat > "$HOME/CUSTOM_ENGINE" <<'CUSTOM_ENGINE_EOF'
 #!/usr/bin/env python3
 import os
 import time
 import math
+import base64
 import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -1695,10 +1673,10 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-ENGINE_LABEL = ${engine_label@Q}
-INDUSTRY = ${industry@Q}
-PORTFOLIO = ${portfolio@Q}
-TICKERS = ${ticker_csv@Q}.split(",")
+ENGINE_LABEL = base64.b64decode(os.environ["ENGINE_LABEL_B64"]).decode("utf-8")
+INDUSTRY = base64.b64decode(os.environ["INDUSTRY_B64"]).decode("utf-8")
+PORTFOLIO = base64.b64decode(os.environ["PORTFOLIO_B64"]).decode("utf-8")
+TICKERS = base64.b64decode(os.environ["TICKER_CSV_B64"]).decode("utf-8").split(",")
 
 LIVE_KEY = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
 LIVE_SECRET = os.getenv("ALPACA_LIVE_SECRET_KEY", "").strip()
@@ -1714,11 +1692,11 @@ def log(msg: str):
     line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {msg}"
     print(line, flush=True)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(line + "\\n")
+        f.write(line + "\n")
 
 def write_status(lines):
     with open(STATUS_FILE, "w", encoding="utf-8") as f:
-        f.write("\\n".join(lines) + "\\n")
+        f.write("\n".join(lines) + "\n")
 
 def get_clients():
     if LIVE_KEY and LIVE_SECRET:
@@ -1737,7 +1715,7 @@ def get_clients():
 
 def fetch_signal(data_client, symbol: str):
     end = datetime.utcnow()
-    start = end - timedelta(days=120)
+    start = end - timedelta(days=180)
 
     req = StockBarsRequest(
         symbol_or_symbols=symbol,
@@ -1767,12 +1745,14 @@ def fetch_signal(data_client, symbol: str):
         return None
 
     buy = (price > sma50) and (sma10 > sma20) and not (price < sma20)
+
     return {
         "price": price,
         "sma10": sma10,
         "sma20": sma20,
         "sma50": sma50,
         "buy": buy,
+        "strength": (price / sma50) + ((sma10 / sma20) if sma20 else 0.0),
     }
 
 def current_positions(trading_client):
@@ -1821,46 +1801,50 @@ def main():
             cash = float(acct.cash)
             positions = current_positions(trading_client)
 
+            analyzed = []
+            for sym in TICKERS:
+                sig = fetch_signal(data_client, sym)
+                if sig is not None:
+                    analyzed.append((sym, sig))
+
+            valid = [(sym, sig) for sym, sig in analyzed if sig["buy"]]
+            valid.sort(key=lambda x: x[1]["strength"], reverse=True)
+
+            top = valid[:3] if valid else []
+            top_symbols = [sym for sym, _ in top]
+
             status_lines = [
                 f"{ENGINE_LABEL}",
                 f"Industry: {INDUSTRY}",
                 f"Portfolio: {PORTFOLIO}",
                 f"Mode: {account_mode}",
-                f"Tickers: {', '.join(TICKERS)}",
+                f"Universe: {', '.join(TICKERS)}",
+                f"Selected: {', '.join(top_symbols) if top_symbols else 'None'}",
                 "",
                 f"Equity: ${equity:,.2f}",
                 f"Cash: ${cash:,.2f}",
                 "",
             ]
 
-            signals = {}
-            for sym in TICKERS:
-                sig = fetch_signal(data_client, sym)
-                signals[sym] = sig
-                if sig is None:
-                    status_lines.append(f"{sym}: waiting for enough data")
-                else:
-                    state = "BUY" if sig["buy"] else "SELL"
-                    status_lines.append(
-                        f"{sym}: {state} | Price ${sig['price']:.2f} | SMA10 ${sig['sma10']:.2f} | SMA20 ${sig['sma20']:.2f} | SMA50 ${sig['sma50']:.2f}"
-                    )
+            for sym, sig in analyzed:
+                state = "BUY" if sig["buy"] else "SELL"
+                picked = " [IN PORTFOLIO]" if sym in top_symbols else ""
+                status_lines.append(
+                    f"{sym}: {state} | Price ${sig['price']:.2f} | SMA10 ${sig['sma10']:.2f} | SMA20 ${sig['sma20']:.2f} | SMA50 ${sig['sma50']:.2f}{picked}"
+                )
 
             write_status(status_lines)
 
             if market_is_open_now():
-                allocation = equity / max(len(TICKERS), 1)
+                allocation = equity / max(len(top_symbols), 1) if top_symbols else 0.0
 
                 for sym in TICKERS:
-                    sig = signals.get(sym)
                     qty = positions.get(sym, 0.0)
 
-                    if sig is None:
-                        continue
-
-                    if sig["buy"] and qty <= 0:
+                    if sym in top_symbols and qty <= 0:
                         log(f"BUY {sym} | allocation={allocation:.2f}")
                         place_buy(trading_client, sym, allocation)
-                    elif (not sig["buy"]) and qty > 0:
+                    elif sym not in top_symbols and qty > 0:
                         log(f"SELL {sym} | qty={qty}")
                         place_sell(trading_client, sym, qty)
 
@@ -1876,10 +1860,14 @@ if __name__ == "__main__":
 CUSTOM_ENGINE_EOF
 
   chmod +x "$HOME/CUSTOM_ENGINE"
+
+  export ENGINE_LABEL_B64 TICKER_CSV_B64 INDUSTRY_B64 PORTFOLIO_B64
 }
 
 create_guided_session() {
   local engine_label="${1:-Custom Engine}"
+
+  draw_session_header
 
   local industry
   industry="$(prompt_industry)"
@@ -1957,14 +1945,7 @@ if [ "$SESSION_MODE" = "--guided" ]; then
   exit 0
 fi
 
-if has_gum; then
-  gum style --border rounded --padding "1 2" --border-foreground 39 \
-    "$(printf "ALGORA1 session — One-session mode\nSelect engine")" >&2
-else
-  echo "ALGORA1 session — One-session mode" >&2
-fi
-echo "" >&2
-
+draw_session_header
 print_engine_blurbs
 echo "" >&2
 
