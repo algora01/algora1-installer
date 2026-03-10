@@ -1503,6 +1503,18 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 has_gum() { command -v gum >/dev/null 2>&1; }
 
+draw_session_header() {
+  printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+  if has_gum; then
+    gum style --border rounded --padding "1 2" --border-foreground 39 \
+      "$(printf "ALGORA1 — Control Panel\nWelcome to ALGORA1's Terminal UI.")" >&2
+  else
+    echo "ALGORA1 — Control Panel" >&2
+    echo "Welcome to ALGORA1's Terminal UI." >&2
+  fi
+  echo "" >&2
+}
+
 print_engine_blurbs() {
   cat >&2 <<'EOT'
 BEXP — Diversified Tesla and NVIDIA engine with real-time risk controls.
@@ -1590,6 +1602,7 @@ engine_running_anywhere() {
 }
 
 prompt_industry() {
+  draw_session_header
   choose "Select industry" \
     "Information Technology" \
     "Health Care" \
@@ -1604,6 +1617,7 @@ prompt_industry() {
 }
 
 prompt_portfolio_type() {
+  draw_session_header
   choose "Select portfolio type" \
     "Growth — Highest return (CAGR / Total Return)" \
     "Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)" \
@@ -1901,6 +1915,7 @@ run_engine_prompt_if_safe() {
     return 0
   fi
 
+  draw_session_header
   local engine
   engine="$(choose "Select pre-made engine" "${ENGINE_NAMES[@]}" "Back")"
   [ -n "$engine" ] || return 1
