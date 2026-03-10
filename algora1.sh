@@ -47,7 +47,7 @@ NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
 
-CSTM — Custom local engine built from your selected industry and portfolio type.
+CSTM.<name> — Custom standalone engine.
 
 EOT
 }
@@ -736,6 +736,9 @@ build_local_custom_engine_file() {
   local industry="$1"
   local portfolio="$2"
   local engine_label="$3"
+  local username="$4"
+  local account_mode="$5"
+  local engine_file_name="$6"
 
   local ticker_csv=""
   case "$industry" in
@@ -752,18 +755,24 @@ build_local_custom_engine_file() {
   esac
 
   [ -n "$ticker_csv" ] || ui_die "No ticker mapping found for selected industry."
+  [ -n "$username" ] || ui_die "Username cannot be empty."
+  [ "$account_mode" = "LIVE" ] || [ "$account_mode" = "PAPER" ] || ui_die "Account mode must be LIVE or PAPER."
 
   local engine_label_b64
   local ticker_csv_b64
   local industry_b64
   local portfolio_b64
+  local username_b64
+  local account_mode_b64
 
   engine_label_b64="$(printf '%s' "$engine_label" | base64 | tr -d '\n')"
   ticker_csv_b64="$(printf '%s' "$ticker_csv" | base64 | tr -d '\n')"
   industry_b64="$(printf '%s' "$industry" | base64 | tr -d '\n')"
   portfolio_b64="$(printf '%s' "$portfolio" | base64 | tr -d '\n')"
+  username_b64="$(printf '%s' "$username" | base64 | tr -d '\n')"
+  account_mode_b64="$(printf '%s' "$account_mode" | base64 | tr -d '\n')"
 
-  local out="${HOME}/.config/algora1_setup/CSTM"
+  local out="${HOME}/.config/algora1_setup/${engine_file_name}"
   mkdir -p "$(dirname "$out")"
 
   cat > "$out" <<EOF
@@ -774,6 +783,8 @@ export ENGINE_LABEL_B64='${engine_label_b64}'
 export TICKER_CSV_B64='${ticker_csv_b64}'
 export INDUSTRY_B64='${industry_b64}'
 export PORTFOLIO_B64='${portfolio_b64}'
+export USERNAME_B64='${username_b64}'
+export ACCOUNT_MODE_B64='${account_mode_b64}'
 
 exec python3 - <<'PY'
 import os
@@ -796,6 +807,8 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 ENGINE_LABEL = base64.b64decode(os.environ["ENGINE_LABEL_B64"]).decode("utf-8")
 INDUSTRY = base64.b64decode(os.environ["INDUSTRY_B64"]).decode("utf-8")
 PORTFOLIO = base64.b64decode(os.environ["PORTFOLIO_B64"]).decode("utf-8")
+USERNAME = base64.b64decode(os.environ["USERNAME_B64"]).decode("utf-8")
+ACCOUNT_MODE = base64.b64decode(os.environ["ACCOUNT_MODE_B64"]).decode("utf-8")
 TICKERS = base64.b64decode(os.environ["TICKER_CSV_B64"]).decode("utf-8").split(",")
 
 LIVE_KEY = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
@@ -805,8 +818,9 @@ PAPER_SECRET = os.getenv("ALPACA_PAPER_SECRET_KEY", "").strip()
 
 ET = ZoneInfo("America/New_York")
 
-STATUS_FILE = os.path.expanduser("~/custom_engine_live_status.txt")
-LOG_FILE = os.path.expanduser("~/custom_engine_investing.log")
+safe_name = ENGINE_LABEL.replace("/", "_").replace(" ", "_")
+STATUS_FILE = os.path.expanduser(f"~/.algora1_{safe_name}_live_status.txt")
+LOG_FILE = os.path.expanduser(f"~/.algora1_{safe_name}_investing.log")
 
 def log(msg: str):
     line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {msg}"
@@ -819,19 +833,25 @@ def write_status(lines):
         f.write("\\n".join(lines) + "\\n")
 
 def get_clients():
-    if LIVE_KEY and LIVE_SECRET:
+    if ACCOUNT_MODE == "LIVE":
+        if not LIVE_KEY or not LIVE_SECRET:
+            raise RuntimeError("Missing LIVE Alpaca credentials.")
         return (
             TradingClient(LIVE_KEY, LIVE_SECRET, paper=False),
             StockHistoricalDataClient(LIVE_KEY, LIVE_SECRET),
             "LIVE"
         )
-    if PAPER_KEY and PAPER_SECRET:
+
+    if ACCOUNT_MODE == "PAPER":
+        if not PAPER_KEY or not PAPER_SECRET:
+            raise RuntimeError("Missing PAPER Alpaca credentials.")
         return (
             TradingClient(PAPER_KEY, PAPER_SECRET, paper=True),
             StockHistoricalDataClient(PAPER_KEY, PAPER_SECRET),
             "PAPER"
         )
-    raise RuntimeError("No Alpaca credentials found.")
+
+    raise RuntimeError(f"Unsupported ACCOUNT_MODE: {ACCOUNT_MODE}")
 
 def fetch_signal(data_client, symbol: str):
     end = datetime.utcnow()
@@ -912,7 +932,7 @@ def market_is_open_now():
 
 def main():
     trading_client, data_client, account_mode = get_clients()
-    log(f"Starting {ENGINE_LABEL} | {INDUSTRY} | {PORTFOLIO} | {account_mode} | tickers={TICKERS}")
+    log(f"Starting {ENGINE_LABEL} | user={USERNAME} | {INDUSTRY} | {PORTFOLIO} | {account_mode} | tickers={TICKERS}")
 
     while True:
         try:
@@ -935,6 +955,7 @@ def main():
 
             status_lines = [
                 f"{ENGINE_LABEL}",
+                f"Username: {USERNAME}",
                 f"Industry: {INDUSTRY}",
                 f"Portfolio: {PORTFOLIO}",
                 f"Mode: {account_mode}",
@@ -1030,22 +1051,24 @@ copy_engines_from_wix_to_vm() {
 upload_local_custom_engine_to_vm() {
   local ip="$1"
   local local_engine_path="$2"
+  local remote_engine_name="$3"
   local key_path="${HOME}/.ssh/${KEY_NAME}"
   local remote_home="/home/${REMOTE_USER}"
 
   [ -f "$local_engine_path" ] || ui_die "Local custom engine not found: $local_engine_path"
+  [ -n "$remote_engine_name" ] || ui_die "Missing remote engine name."
 
-  ui_step "[10.5/12] Uploading local CSTM"
+  ui_step "[10.5/12] Uploading local custom engine"
 
   scp -q -i "${key_path}" -o StrictHostKeyChecking=accept-new \
-    "$local_engine_path" "${REMOTE_USER}@${ip}:${remote_home}/CSTM" \
-    || ui_die "Failed to upload local CSTM"
+    "$local_engine_path" "${REMOTE_USER}@${ip}:${remote_home}/${remote_engine_name}" \
+    || ui_die "Failed to upload local custom engine"
 
   ssh -i "${key_path}" -o StrictHostKeyChecking=accept-new \
-    "${REMOTE_USER}@${ip}" "chmod +x '${remote_home}/CSTM'" \
+    "${REMOTE_USER}@${ip}" "chmod +x '${remote_home}/${remote_engine_name}'" \
     >/dev/null 2>&1 || true
 
-  ui_ok "Local CSTM uploaded"
+  ui_ok "Local custom engine uploaded: ${remote_engine_name}"
 }
 
 CFG_DIR="${HOME}/.config/algora1_setup"
@@ -1801,7 +1824,7 @@ NVDA — NVIDIA engine with signal-based deployment and downside controls.
 
 PMNY — Paper-trading BEXP for risk-free testing.
 
-CSTM — Custom local engine built from your selected industry and portfolio type.
+CSTM.<name> — Custom standalone engine.
 
 EOT
 }
@@ -1922,27 +1945,40 @@ ticker_csv_for_choice() {
 }
 
 write_custom_engine() {
-  local engine_label="$1"
-  local ticker_csv="$2"
-  local industry="$3"
-  local portfolio="$4"
+  local engine_file_name="$1"
+  local engine_label="$2"
+  local ticker_csv="$3"
+  local industry="$4"
+  local portfolio="$5"
+  local account_mode="$6"
 
   ENGINE_LABEL_B64="$(printf '%s' "$engine_label" | base64 | tr -d '\n')"
   TICKER_CSV_B64="$(printf '%s' "$ticker_csv" | base64 | tr -d '\n')"
   INDUSTRY_B64="$(printf '%s' "$industry" | base64 | tr -d '\n')"
   PORTFOLIO_B64="$(printf '%s' "$portfolio" | base64 | tr -d '\n')"
+  ACCOUNT_MODE_B64="$(printf '%s' "$account_mode" | base64 | tr -d '\n')"
 
-  cat > "$HOME/CSTM" <<'CSTM_EOF'
+  cat > "$HOME/${engine_file_name}" <<'CSTM_EOF'
 #!/usr/bin/env python3
 import os
+import sys
 import time
 import math
 import base64
+import shutil
+import select
+import termios
+import atexit
+import logging
 import traceback
+import requests
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from colorama import Style, init
+init(autoreset=True)
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -1954,6 +1990,7 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 ENGINE_LABEL = base64.b64decode(os.environ["ENGINE_LABEL_B64"]).decode("utf-8")
 INDUSTRY = base64.b64decode(os.environ["INDUSTRY_B64"]).decode("utf-8")
 PORTFOLIO = base64.b64decode(os.environ["PORTFOLIO_B64"]).decode("utf-8")
+ACCOUNT_MODE = base64.b64decode(os.environ["ACCOUNT_MODE_B64"]).decode("utf-8")
 TICKERS = base64.b64decode(os.environ["TICKER_CSV_B64"]).decode("utf-8").split(",")
 
 LIVE_KEY = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
@@ -1961,69 +1998,248 @@ LIVE_SECRET = os.getenv("ALPACA_LIVE_SECRET_KEY", "").strip()
 PAPER_KEY = os.getenv("ALPACA_PAPER_API_KEY", "").strip()
 PAPER_SECRET = os.getenv("ALPACA_PAPER_SECRET_KEY", "").strip()
 
-ET = ZoneInfo("America/New_York")
+def c256(n: int) -> str:
+    return f"\033[38;5;{n}m"
 
-STATUS_FILE = os.path.expanduser("~/custom_engine_live_status.txt")
-LOG_FILE = os.path.expanduser("~/custom_engine_investing.log")
+C_ACCENT = c256(39)
+C_ERR    = c256(196)
+C_WARN   = c256(136)
+C_MUTED  = c256(245)
+C_OK     = c256(40)
+
+ET = ZoneInfo("America/New_York")
+CHECK_URL = "http://34.59.74.231:3000/check"
+user_id = None
+last_background_check = None
+BACKGROUND_CHECK_INTERVAL = timedelta(hours=24)
+
+safe_name = ENGINE_LABEL.replace("/", "_").replace(" ", "_")
+STATUS_FILE = os.path.expanduser(f"~/.algora1_{safe_name}_live_status.txt")
+LOG_FILE = os.path.expanduser(f"~/.algora1_{safe_name}_investing.log")
+
+def now_et():
+    return datetime.now(ET)
+
+def setup_logging():
+    fmt = logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %I:%M:%S %p"
+    )
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.setLevel(logging.INFO)
+
+    fh = RotatingFileHandler(LOG_FILE, maxBytes=10_485_760, backupCount=5)
+    fh.setFormatter(fmt)
+    fh.setLevel(logging.INFO)
+    root.addHandler(fh)
+
+setup_logging()
 
 def log(msg: str):
-    line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {msg}"
-    print(line, flush=True)
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    logging.info(msg)
 
 def write_status(lines):
     with open(STATUS_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
+def hard_clear_screen():
+    sys.stdout.write("\033[?25l\033[H\033[2J\033[3J")
+    sys.stdout.flush()
+
+def _terminal_columns(default=80):
+    try:
+        return shutil.get_terminal_size((default, 24)).columns
+    except Exception:
+        return default
+
+def _terminal_rows(default=24):
+    try:
+        return shutil.get_terminal_size((80, default)).lines
+    except Exception:
+        return default
+
+def _drain_stdin_buffer():
+    try:
+        if not sys.stdin.isatty():
+            return
+        fd = sys.stdin.fileno()
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0)
+            if not ready:
+                break
+            os.read(fd, 1024)
+    except Exception:
+        pass
+
+_ORIG_TERMIOS = None
+def _disable_terminal_echo():
+    global _ORIG_TERMIOS
+    try:
+        if not sys.stdin.isatty():
+            return
+        fd = sys.stdin.fileno()
+        _ORIG_TERMIOS = termios.tcgetattr(fd)
+        new = termios.tcgetattr(fd)
+        new[3] = new[3] & ~termios.ECHO
+        termios.tcsetattr(fd, termios.TCSANOW, new)
+    except Exception:
+        pass
+
+def _restore_terminal_echo():
+    global _ORIG_TERMIOS
+    try:
+        if _ORIG_TERMIOS is not None and sys.stdin.isatty():
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, _ORIG_TERMIOS)
+    except Exception:
+        pass
+
+def _print_subscription_box(user_text="", loading_text="", panel_width=78):
+    cols = _terminal_columns(80)
+    rows = _terminal_rows(24)
+    width = min(panel_width, max(44, cols - 2))
+    inner = width - 4
+    left = max(0, (cols - width) // 2)
+    prefix = " " * left
+
+    prompt_label = "Enter your User ID (cus_xxx): "
+    max_user_chars = max(0, inner - len(prompt_label))
+    shown_user = (user_text or "")[:max_user_chars]
+
+    lines = ["", f"{prompt_label}{shown_user}", "", loading_text or "", ""]
+    top_pad = max(0, (rows - (len(lines) + 2)) // 2)
+
+    hard_clear_screen()
+    if top_pad > 0:
+        sys.stdout.write("\n" * top_pad)
+
+    top = f"{C_ACCENT}╭{'─' * (width - 2)}╮{Style.RESET_ALL}"
+    bottom = f"{C_ACCENT}╰{'─' * (width - 2)}╯{Style.RESET_ALL}"
+    print(prefix + top)
+    for line in lines:
+        visible = line[:inner]
+        pad = " " * (inner - len(visible))
+        print(prefix + f"{C_ACCENT}│{Style.RESET_ALL} {visible}{pad} {C_ACCENT}│{Style.RESET_ALL}")
+    print(prefix + bottom)
+
+    return {
+        "prompt_row": top_pad + 3,
+        "prompt_col": left + 3 + len(prompt_label),
+        "max_user_chars": max_user_chars,
+    }
+
+def render_subscription_panel(user_text="", loading_text=""):
+    _print_subscription_box(user_text=user_text, loading_text=loading_text)
+
+def animated_loading(user_text="", duration=8):
+    _drain_stdin_buffer()
+    total_steps = 80
+    inner = max(24, min(78, _terminal_columns(80)) - 4)
+    for i in range(total_steps):
+        pct = int((i + 1) * 100 / total_steps)
+        prefix = "Verifying subscription... ["
+        suffix = f"] {pct:3d}%"
+        bar_len = max(10, inner - len(prefix) - len(suffix))
+        fill_n = (i + 1) * bar_len // total_steps
+        bar = ("█" * fill_n) + ("░" * (bar_len - fill_n))
+        render_subscription_panel(user_text=user_text, loading_text=f"{prefix}{bar}{suffix}")
+        time.sleep(duration / total_steps)
+
+def verify_subscription():
+    global user_id
+
+    while True:
+        _drain_stdin_buffer()
+        meta = _print_subscription_box(user_text="", loading_text="")
+        sys.stdout.write(f"\033[{meta['prompt_row']};{meta['prompt_col']}H")
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+
+        try:
+            typed = input()
+        except EOFError:
+            typed = ""
+
+        sys.stdout.write("\033[?25l")
+        sys.stdout.flush()
+
+        user_id = typed.strip()[:meta["max_user_chars"]]
+        if not user_id:
+            render_subscription_panel(user_text="", loading_text=f"{C_ERR}User ID cannot be empty!{Style.RESET_ALL}")
+            time.sleep(1.1)
+            continue
+
+        animated_loading(user_text=user_id, duration=8)
+        _drain_stdin_buffer()
+
+        try:
+            resp = requests.post(CHECK_URL, json={"customerId": user_id}, timeout=10)
+            if resp.status_code == 200 and resp.json().get("active"):
+                hard_clear_screen()
+                return True
+            render_subscription_panel(
+                user_text=user_id,
+                loading_text=f"{C_ERR}Subscription not active or invalid ID.{Style.RESET_ALL}",
+            )
+        except Exception as e:
+            render_subscription_panel(
+                user_text=user_id,
+                loading_text=f"{C_ERR}Connection failed: {e}{Style.RESET_ALL}",
+            )
+
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        if input(f"{C_WARN}Try again? (y/n): {Style.RESET_ALL}").lower() != "y":
+            return False
+
+def background_subscription_check():
+    global last_background_check
+    if not user_id:
+        return True
+    now = now_et()
+    if last_background_check is None or now - last_background_check >= BACKGROUND_CHECK_INTERVAL:
+        try:
+            resp = requests.post(CHECK_URL, json={"customerId": user_id}, timeout=10)
+            if resp.status_code == 200 and not resp.json().get("active"):
+                logging.critical("SUBSCRIPTION EXPIRED – Shutting down engine.")
+                return False
+        except Exception:
+            pass
+        last_background_check = now
+    return True
+
 def get_clients():
-    if LIVE_KEY and LIVE_SECRET:
-        return (
-            TradingClient(LIVE_KEY, LIVE_SECRET, paper=False),
-            StockHistoricalDataClient(LIVE_KEY, LIVE_SECRET),
-            "LIVE"
-        )
-    if PAPER_KEY and PAPER_SECRET:
-        return (
-            TradingClient(PAPER_KEY, PAPER_SECRET, paper=True),
-            StockHistoricalDataClient(PAPER_KEY, PAPER_SECRET),
-            "PAPER"
-        )
-    raise RuntimeError("No Alpaca credentials found.")
+    if ACCOUNT_MODE == "LIVE":
+        if not LIVE_KEY or not LIVE_SECRET:
+            raise RuntimeError("Missing LIVE Alpaca credentials.")
+        return TradingClient(LIVE_KEY, LIVE_SECRET, paper=False), StockHistoricalDataClient(LIVE_KEY, LIVE_SECRET), "LIVE"
+    if ACCOUNT_MODE == "PAPER":
+        if not PAPER_KEY or not PAPER_SECRET:
+            raise RuntimeError("Missing PAPER Alpaca credentials.")
+        return TradingClient(PAPER_KEY, PAPER_SECRET, paper=True), StockHistoricalDataClient(PAPER_KEY, PAPER_SECRET), "PAPER"
+    raise RuntimeError(f"Unsupported ACCOUNT_MODE: {ACCOUNT_MODE}")
 
 def fetch_signal(data_client, symbol: str):
     end = datetime.utcnow()
     start = end - timedelta(days=180)
-
-    req = StockBarsRequest(
-        symbol_or_symbols=symbol,
-        timeframe=TimeFrame.Day,
-        start=start,
-        end=end,
-    )
+    req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=start, end=end)
     bars = data_client.get_stock_bars(req).df
     if bars.empty:
         return None
-
     if isinstance(bars.index, pd.MultiIndex):
         bars = bars.xs(symbol, level=0)
-
     bars = bars.sort_index().copy()
     bars["SMA10"] = bars["close"].rolling(10).mean()
     bars["SMA20"] = bars["close"].rolling(20).mean()
     bars["SMA50"] = bars["close"].rolling(50).mean()
-
     row = bars.iloc[-1]
     price = float(row["close"])
     sma10 = float(row["SMA10"])
     sma20 = float(row["SMA20"])
     sma50 = float(row["SMA50"])
-
     if any(math.isnan(x) for x in [sma10, sma20, sma50]):
         return None
-
     buy = (price > sma50) and (sma10 > sma20) and not (price < sma20)
-
     return {
         "price": price,
         "sma10": sma10,
@@ -2045,101 +2261,101 @@ def current_positions(trading_client):
 def place_buy(trading_client, symbol: str, notional: float):
     if notional <= 0:
         return
-    order = MarketOrderRequest(
-        symbol=symbol,
-        notional=round(notional, 2),
-        side=OrderSide.BUY,
-        time_in_force=TimeInForce.DAY,
-    )
+    order = MarketOrderRequest(symbol=symbol, notional=round(notional, 2), side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
     trading_client.submit_order(order_data=order)
 
 def place_sell(trading_client, symbol: str, qty: float):
     if qty <= 0:
         return
-    order = MarketOrderRequest(
-        symbol=symbol,
-        qty=qty,
-        side=OrderSide.SELL,
-        time_in_force=TimeInForce.DAY,
-    )
+    order = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.SELL, time_in_force=TimeInForce.DAY)
     trading_client.submit_order(order_data=order)
 
 def market_is_open_now():
-    now = datetime.now(ET)
+    now = now_et()
     return now.weekday() < 5 and ((now.hour > 9 or (now.hour == 9 and now.minute >= 29)) and (now.hour < 16))
 
 def main():
+    if not background_subscription_check():
+        return False
+
     trading_client, data_client, account_mode = get_clients()
-    log(f"Starting {ENGINE_LABEL} | {INDUSTRY} | {PORTFOLIO} | {account_mode} | tickers={TICKERS}")
+    acct = trading_client.get_account()
+    equity = float(acct.equity)
+    cash = float(acct.cash)
+    positions = current_positions(trading_client)
 
-    while True:
-        try:
-            acct = trading_client.get_account()
-            equity = float(acct.equity)
-            cash = float(acct.cash)
-            positions = current_positions(trading_client)
+    analyzed = []
+    for sym in TICKERS:
+        sig = fetch_signal(data_client, sym)
+        if sig is not None:
+            analyzed.append((sym, sig))
 
-            analyzed = []
-            for sym in TICKERS:
-                sig = fetch_signal(data_client, sym)
-                if sig is not None:
-                    analyzed.append((sym, sig))
+    valid = [(sym, sig) for sym, sig in analyzed if sig["buy"]]
+    valid.sort(key=lambda x: x[1]["strength"], reverse=True)
+    top = valid[:3] if valid else []
+    top_symbols = [sym for sym, _ in top]
 
-            valid = [(sym, sig) for sym, sig in analyzed if sig["buy"]]
-            valid.sort(key=lambda x: x[1]["strength"], reverse=True)
+    status_lines = [
+        f"{ENGINE_LABEL}",
+        f"Industry: {INDUSTRY}",
+        f"Portfolio: {PORTFOLIO}",
+        f"Mode: {account_mode}",
+        f"User ID: {user_id or 'Not set'}",
+        f"Universe: {', '.join(TICKERS)}",
+        f"Selected: {', '.join(top_symbols) if top_symbols else 'None'}",
+        "",
+        f"Equity: ${equity:,.2f}",
+        f"Cash: ${cash:,.2f}",
+        "",
+    ]
 
-            top = valid[:3] if valid else []
-            top_symbols = [sym for sym, _ in top]
+    for sym, sig in analyzed:
+        state = "BUY" if sig["buy"] else "SELL"
+        picked = " [IN PORTFOLIO]" if sym in top_symbols else ""
+        status_lines.append(
+            f"{sym}: {state} | Price ${sig['price']:.2f} | SMA10 ${sig['sma10']:.2f} | SMA20 ${sig['sma20']:.2f} | SMA50 ${sig['sma50']:.2f}{picked}"
+        )
 
-            status_lines = [
-                f"{ENGINE_LABEL}",
-                f"Industry: {INDUSTRY}",
-                f"Portfolio: {PORTFOLIO}",
-                f"Mode: {account_mode}",
-                f"Universe: {', '.join(TICKERS)}",
-                f"Selected: {', '.join(top_symbols) if top_symbols else 'None'}",
-                "",
-                f"Equity: ${equity:,.2f}",
-                f"Cash: ${cash:,.2f}",
-                "",
-            ]
+    write_status(status_lines)
 
-            for sym, sig in analyzed:
-                state = "BUY" if sig["buy"] else "SELL"
-                picked = " [IN PORTFOLIO]" if sym in top_symbols else ""
-                status_lines.append(
-                    f"{sym}: {state} | Price ${sig['price']:.2f} | SMA10 ${sig['sma10']:.2f} | SMA20 ${sig['sma20']:.2f} | SMA50 ${sig['sma50']:.2f}{picked}"
-                )
+    if market_is_open_now():
+        allocation = equity / max(len(top_symbols), 1) if top_symbols else 0.0
+        for sym in TICKERS:
+            qty = positions.get(sym, 0.0)
+            if sym in top_symbols and qty <= 0:
+                logging.info(f"BUY {sym} | allocation={allocation:.2f}")
+                place_buy(trading_client, sym, allocation)
+            elif sym not in top_symbols and qty > 0:
+                logging.info(f"SELL {sym} | qty={qty}")
+                place_sell(trading_client, sym, qty)
 
-            write_status(status_lines)
+    return True
 
-            if market_is_open_now():
-                allocation = equity / max(len(top_symbols), 1) if top_symbols else 0.0
+if not verify_subscription():
+    sys.exit(1)
 
-                for sym in TICKERS:
-                    qty = positions.get(sym, 0.0)
-
-                    if sym in top_symbols and qty <= 0:
-                        log(f"BUY {sym} | allocation={allocation:.2f}")
-                        place_buy(trading_client, sym, allocation)
-                    elif sym not in top_symbols and qty > 0:
-                        log(f"SELL {sym} | qty={qty}")
-                        place_sell(trading_client, sym, qty)
-
-            time.sleep(60)
-
-        except Exception as e:
-            log(f"ERROR: {e}")
-            log(traceback.format_exc())
-            time.sleep(30)
+_disable_terminal_echo()
+atexit.register(_restore_terminal_echo)
 
 if __name__ == "__main__":
-    main()
+    try:
+        while True:
+            if not main():
+                print(f"\n{C_ERR}Subscription expired or critical error.{Style.RESET_ALL}")
+                break
+            time.sleep(60)
+    except KeyboardInterrupt:
+        _restore_terminal_echo()
+        sys.exit(0)
+    except Exception:
+        logging.critical(traceback.format_exc())
+        _restore_terminal_echo()
+        sys.exit(1)
 CSTM_EOF
 
-  chmod +x "$HOME/CSTM"
+  chmod +x "$HOME/${engine_file_name}"
 
-  export ENGINE_LABEL_B64 TICKER_CSV_B64 INDUSTRY_B64 PORTFOLIO_B64
+  export ENGINE_LABEL_B64 TICKER_CSV_B64 INDUSTRY_B64 PORTFOLIO_B64 ACCOUNT_MODE_B64
 }
 
 run_custom_from_config() {
@@ -2150,13 +2366,15 @@ run_custom_from_config() {
   # shellcheck disable=SC1090
   source "$config_path"
 
+  [ -n "${ENGINE_FILE_NAME:-}" ] || { warn "Missing ENGINE_FILE_NAME in config."; return 1; }
   [ -n "${ENGINE_LABEL:-}" ] || { warn "Missing ENGINE_LABEL in config."; return 1; }
+  [ -n "${ACCOUNT_MODE:-}" ] || { warn "Missing ACCOUNT_MODE in config."; return 1; }
   [ -n "${INDUSTRY:-}" ] || { warn "Missing INDUSTRY in config."; return 1; }
   [ -n "${PORTFOLIO:-}" ] || { warn "Missing PORTFOLIO in config."; return 1; }
   [ -n "${TICKER_CSV:-}" ] || { warn "Missing TICKER_CSV in config."; return 1; }
 
-  write_custom_engine "$ENGINE_LABEL" "$TICKER_CSV" "$INDUSTRY" "$PORTFOLIO"
-  chmod +x "$HOME/CSTM" >/dev/null 2>&1 || true
+  write_custom_engine "$ENGINE_FILE_NAME" "$ENGINE_LABEL" "$TICKER_CSV" "$INDUSTRY" "$PORTFOLIO" "$ACCOUNT_MODE"
+  chmod +x "$HOME/${ENGINE_FILE_NAME}" >/dev/null 2>&1 || true
 
   ok "Custom engine created: $ENGINE_LABEL"
 
@@ -2168,7 +2386,8 @@ run_custom_from_config() {
     TICKER_CSV_B64="$TICKER_CSV_B64" \
     INDUSTRY_B64="$INDUSTRY_B64" \
     PORTFOLIO_B64="$PORTFOLIO_B64" \
-    "$HOME/CSTM"
+    ACCOUNT_MODE_B64="$ACCOUNT_MODE_B64" \
+    "$HOME/${ENGINE_FILE_NAME}"
 }
 
 run_engine_prompt_if_safe() {
@@ -3299,10 +3518,12 @@ ticker_csv_for_choice() {
 
 write_custom_config() {
   local session_name="$1"
-  local engine_label="$2"
-  local industry="$3"
-  local portfolio="$4"
-  local ticker_csv="$5"
+  local engine_file_name="$2"
+  local engine_label="$3"
+  local account_mode="$4"
+  local industry="$5"
+  local portfolio="$6"
+  local ticker_csv="$7"
 
   local dir="$HOME/.algora1_custom"
   local cfg="$dir/${session_name}.env"
@@ -3311,7 +3532,9 @@ write_custom_config() {
   chmod 700 "$dir"
 
   cat > "$cfg" <<EOF
+ENGINE_FILE_NAME=$(printf '%q' "$engine_file_name")
 ENGINE_LABEL=$(printf '%q' "$engine_label")
+ACCOUNT_MODE=$(printf '%q' "$account_mode")
 INDUSTRY=$(printf '%q' "$industry")
 PORTFOLIO=$(printf '%q' "$portfolio")
 TICKER_CSV=$(printf '%q' "$ticker_csv")
@@ -3397,7 +3620,8 @@ running_sessions_menu() {
     fi
 
     local name default_name
-    local industry portfolio ticker_csv config_path
+    local engine_name username account_pick account_mode
+    local industry portfolio ticker_csv config_path engine_file_name safe_engine_name
 
     echo "" >&2
 
@@ -3414,7 +3638,29 @@ running_sessions_menu() {
 
     if [ "$action" = "Launch Pre-Made Engine" ]; then
       create_new_session "$name"
+
     elif [ "$action" = "Create Custom Engine" ]; then
+      hard_clear
+      draw_header_once
+      engine_name="$(input "Custom engine name:")"
+      engine_name="$(echo "${engine_name:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [ -n "$engine_name" ] || { warn "Custom engine name cannot be empty."; return 0; }
+
+      safe_engine_name="$(printf '%s' "$engine_name" | tr ' ' '_' | tr -cd 'A-Za-z0-9_-')"
+      [ -n "$safe_engine_name" ] || { warn "Engine name must contain letters, numbers, _ or -."; return 0; }
+
+      hard_clear
+      draw_header_once
+      account_pick="$(choose "Use this custom engine for" "Paper" "Live" "Back")"
+      [ -n "$account_pick" ] || return 0
+      [ "$account_pick" != "Back" ] || return 0
+
+      case "$account_pick" in
+        "Paper") account_mode="PAPER" ;;
+        "Live")  account_mode="LIVE" ;;
+        *) return 0 ;;
+      esac
+
       hard_clear
       draw_header_once
       industry="$(prompt_industry || true)"
@@ -3430,7 +3676,17 @@ running_sessions_menu() {
       ticker_csv="$(ticker_csv_for_choice "$industry" "$portfolio")"
       [ -n "$ticker_csv" ] || { warn "No ticker mapping found."; return 0; }
 
-      config_path="$(write_custom_config "$name" "$name" "$industry" "$portfolio" "$ticker_csv")"
+      engine_file_name="CSTM.${safe_engine_name}"
+
+      config_path="$(write_custom_config \
+        "$name" \
+        "$engine_file_name" \
+        "$engine_name" \
+        "$account_mode" \
+        "$industry" \
+        "$portfolio" \
+        "$ticker_csv")"
+
       create_guided_session "$name" "$config_path" || return 0
     fi
 
