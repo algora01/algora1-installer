@@ -1241,10 +1241,17 @@ create_instance_if_needed() {
   done
 
   for machine_choice in e2-medium e2-small e2-standard-2 "${requested_machine_type}"; do
-    case " ${candidate_machine_types[*]} " in
-      *" ${machine_choice} "*) ;;
-      *) candidate_machine_types+=("${machine_choice}") ;;
-    esac
+    local seen_machine="0"
+    local existing_machine
+    for existing_machine in "${candidate_machine_types[@]:-}"; do
+      if [ "${existing_machine}" = "${machine_choice}" ]; then
+        seen_machine="1"
+        break
+      fi
+    done
+    if [ "${seen_machine}" = "0" ]; then
+      candidate_machine_types+=("${machine_choice}")
+    fi
   done
 
   for zone_choice in "${candidate_zones[@]}"; do
