@@ -1240,19 +1240,12 @@ create_instance_if_needed() {
     done
   done
 
-  for machine_choice in e2-medium e2-small e2-standard-2 "${requested_machine_type}"; do
-    local seen_machine="0"
-    local existing_machine
-    for existing_machine in "${candidate_machine_types[@]:-}"; do
-      if [ "${existing_machine}" = "${machine_choice}" ]; then
-        seen_machine="1"
-        break
-      fi
-    done
-    if [ "${seen_machine}" = "0" ]; then
-      candidate_machine_types+=("${machine_choice}")
-    fi
-  done
+  candidate_machine_types=( "e2-medium" "e2-small" "e2-standard-2" )
+  if [ "${requested_machine_type}" != "e2-medium" ] \
+    && [ "${requested_machine_type}" != "e2-small" ] \
+    && [ "${requested_machine_type}" != "e2-standard-2" ]; then
+    candidate_machine_types+=( "${requested_machine_type}" )
+  fi
 
   for zone_choice in "${candidate_zones[@]}"; do
     for machine_choice in "${candidate_machine_types[@]}"; do
