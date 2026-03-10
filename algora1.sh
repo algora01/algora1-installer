@@ -1934,10 +1934,15 @@ run_engine_prompt_if_safe() {
 printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
 SESSION_MODE="${1:-premade}"
-CONFIG_PATH="${2:-}"
+CONFIG_PATH="${ALGORA1_CUSTOM_CONFIG:-${2:-}}"
 
 if [ "$SESSION_MODE" = "--custom-config" ]; then
-  run_custom_from_config "$CONFIG_PATH" || exit 0
+  run_custom_from_config "$CONFIG_PATH" || {
+    warn "Failed to start custom engine from config: ${CONFIG_PATH:-<empty>}"
+    printf "\nPress Enter to return..."
+    read -r _ || true
+    exit 1
+  }
   exit 0
 fi
 
@@ -2961,7 +2966,11 @@ create_new_session() {
 create_guided_session() {
   local name="$1"
   local config_path="$2"
-  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session --custom-config $(printf '%q' "$config_path")"
+
+  screen -S "$name" -dm bash -lc "cd \$HOME && \
+    export TERM=screen-256color && \
+    export ALGORA1_CUSTOM_CONFIG=$(printf '%q' "$config_path") && \
+    exec /usr/local/bin/algora1-session --custom-config"
 }
 
 engine_running_anywhere() {
