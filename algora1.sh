@@ -1472,6 +1472,13 @@ install_gum_if_needed() {
 
 install_gum_if_needed || true
 
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update -y >/dev/null 2>&1 || true
+  sudo apt-get install -y python3-pip python3-venv >/dev/null 2>&1 || true
+  python3 -m pip install --upgrade pip >/dev/null 2>&1 || true
+  python3 -m pip install pandas alpaca-py >/dev/null 2>&1 || true
+fi
+
 sudo tee /usr/local/bin/algora1-session >/dev/null <<'SESSION'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1509,7 +1516,6 @@ choose() {
       fi
     fi
 
-    # Pin navigation hint to terminal bottom; hide gum's built-in help line.
     if [ -n "${lines}" ] && [ "${lines}" -gt 1 ] 2>/dev/null; then
       tput sc 1>&2 2>/dev/null || true
       tput cup $((lines - 1)) 0 1>&2 2>/dev/null || true
@@ -1537,23 +1543,346 @@ choose() {
   fi
 }
 
+input() {
+  local prompt="$1"
+  if has_gum; then
+    gum input \
+      --prompt "$prompt " \
+      --prompt.foreground 39 \
+      --cursor.foreground 39 \
+      --placeholder.foreground 245 \
+      --placeholder "" \
+      --width 40 1>&2
+  else
+    printf "%s " "$prompt" >&2
+    local v; read -r v
+    echo "$v"
+  fi
+}
+
 ok()   { printf "✓ %s\n" "$*"; }
-info() { printf "INFO %s\n" "$*"; }
 warn() { printf "WARN %s\n" "$*" >&2; }
 
 engine_running_anywhere() {
-  # Detect real engine executables only (argv[0] basename), not symbol args.
   ps -eo args= 2>/dev/null | awk '
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA") {
+      if (cmd=="BEXP" || cmd=="PMNY" || cmd=="TSLA" || cmd=="NVDA" || cmd=="CUSTOM_ENGINE") {
         found=1
         exit 0
       }
     }
     END { exit(found ? 0 : 1) }
   '
+}
+
+prompt_industry() {
+  choose "Select industry" \
+    "Information Technology" \
+    "Health Care" \
+    "Financials" \
+    "Consumer Discretionary" \
+    "Communication Services" \
+    "Industrials" \
+    "Consumer Staples" \
+    "Energy" \
+    "Diversify Exposure" \
+    "Back"
+}
+
+prompt_portfolio_type() {
+  choose "Select portfolio type" \
+    "Growth — Highest return (CAGR / Total Return)" \
+    "Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)" \
+    "Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)" \
+    "Back"
+}
+
+ticker_csv_for_choice() {
+  local industry="$1"
+  local portfolio="$2"
+
+  case "${industry}|${portfolio}" in
+    "Information Technology|Growth — Highest return (CAGR / Total Return)") echo "NVDA,PLTR,AVGO" ;;
+    "Information Technology|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "MSFT,ADBE,IBM" ;;
+    "Information Technology|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "MSFT,NVDA,AVGO" ;;
+
+    "Health Care|Growth — Highest return (CAGR / Total Return)") echo "LLY,UNH,ABBV" ;;
+    "Health Care|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "JNJ,UNH,ABBV" ;;
+    "Health Care|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "LLY,JNJ,UNH" ;;
+
+    "Financials|Growth — Highest return (CAGR / Total Return)") echo "BLK,JPM,GS" ;;
+    "Financials|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "BRK.B,JPM,USB" ;;
+    "Financials|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "BLK,JPM,MS" ;;
+
+    "Consumer Discretionary|Growth — Highest return (CAGR / Total Return)") echo "AMZN,TSLA,HD" ;;
+    "Consumer Discretionary|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "MCD,HD,SBUX" ;;
+    "Consumer Discretionary|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "AMZN,HD,MCD" ;;
+
+    "Communication Services|Growth — Highest return (CAGR / Total Return)") echo "META,NFLX,GOOG" ;;
+    "Communication Services|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "GOOG,TMUS,CMCSA" ;;
+    "Communication Services|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "GOOG,META,TMUS" ;;
+
+    "Industrials|Growth — Highest return (CAGR / Total Return)") echo "CAT,GE,UBER" ;;
+    "Industrials|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "HON,UNP,CAT" ;;
+    "Industrials|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "GE,HON,UNP" ;;
+
+    "Consumer Staples|Growth — Highest return (CAGR / Total Return)") echo "COST,WMT,PG" ;;
+    "Consumer Staples|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "PG,KO,PEP" ;;
+    "Consumer Staples|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "COST,PG,WMT" ;;
+
+    "Energy|Growth — Highest return (CAGR / Total Return)") echo "XOM,CVX,CVX" ;;
+    "Energy|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "CVX,XOM,CVX" ;;
+    "Energy|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "XOM,CVX,XOM" ;;
+
+    "Diversify Exposure|Growth — Highest return (CAGR / Total Return)") echo "NVDA,META,AMZN" ;;
+    "Diversify Exposure|Stability — Lowest risk / smoother ride (Max Drawdown / Volatility)") echo "MSFT,JNJ,PG" ;;
+    "Diversify Exposure|Efficiency — Best risk-adjusted return (Sharpe / Sortino / Calmar)") echo "MSFT,GOOG,LLY" ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+write_custom_engine() {
+  local engine_label="$1"
+  local ticker_csv="$2"
+  local industry="$3"
+  local portfolio="$4"
+
+  cat > "$HOME/CUSTOM_ENGINE" <<EOF
+#!/usr/bin/env python3
+import os
+import time
+import math
+import traceback
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import pandas as pd
+
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+
+ENGINE_LABEL = ${engine_label@Q}
+INDUSTRY = ${industry@Q}
+PORTFOLIO = ${portfolio@Q}
+TICKERS = ${ticker_csv@Q}.split(",")
+
+LIVE_KEY = os.getenv("ALPACA_LIVE_API_KEY", "").strip()
+LIVE_SECRET = os.getenv("ALPACA_LIVE_SECRET_KEY", "").strip()
+PAPER_KEY = os.getenv("ALPACA_PAPER_API_KEY", "").strip()
+PAPER_SECRET = os.getenv("ALPACA_PAPER_SECRET_KEY", "").strip()
+
+ET = ZoneInfo("America/New_York")
+
+STATUS_FILE = os.path.expanduser("~/custom_engine_live_status.txt")
+LOG_FILE = os.path.expanduser("~/custom_engine_investing.log")
+
+def log(msg: str):
+    line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {msg}"
+    print(line, flush=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(line + "\\n")
+
+def write_status(lines):
+    with open(STATUS_FILE, "w", encoding="utf-8") as f:
+        f.write("\\n".join(lines) + "\\n")
+
+def get_clients():
+    if LIVE_KEY and LIVE_SECRET:
+        return (
+            TradingClient(LIVE_KEY, LIVE_SECRET, paper=False),
+            StockHistoricalDataClient(LIVE_KEY, LIVE_SECRET),
+            "LIVE"
+        )
+    if PAPER_KEY and PAPER_SECRET:
+        return (
+            TradingClient(PAPER_KEY, PAPER_SECRET, paper=True),
+            StockHistoricalDataClient(PAPER_KEY, PAPER_SECRET),
+            "PAPER"
+        )
+    raise RuntimeError("No Alpaca credentials found.")
+
+def fetch_signal(data_client, symbol: str):
+    end = datetime.utcnow()
+    start = end - timedelta(days=120)
+
+    req = StockBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=TimeFrame.Day,
+        start=start,
+        end=end,
+    )
+    bars = data_client.get_stock_bars(req).df
+    if bars.empty:
+        return None
+
+    if isinstance(bars.index, pd.MultiIndex):
+        bars = bars.xs(symbol, level=0)
+
+    bars = bars.sort_index().copy()
+    bars["SMA10"] = bars["close"].rolling(10).mean()
+    bars["SMA20"] = bars["close"].rolling(20).mean()
+    bars["SMA50"] = bars["close"].rolling(50).mean()
+
+    row = bars.iloc[-1]
+    price = float(row["close"])
+    sma10 = float(row["SMA10"])
+    sma20 = float(row["SMA20"])
+    sma50 = float(row["SMA50"])
+
+    if any(math.isnan(x) for x in [sma10, sma20, sma50]):
+        return None
+
+    buy = (price > sma50) and (sma10 > sma20) and not (price < sma20)
+    return {
+        "price": price,
+        "sma10": sma10,
+        "sma20": sma20,
+        "sma50": sma50,
+        "buy": buy,
+    }
+
+def current_positions(trading_client):
+    result = {}
+    for p in trading_client.get_all_positions():
+        try:
+            result[p.symbol] = float(p.qty)
+        except Exception:
+            result[p.symbol] = 0.0
+    return result
+
+def place_buy(trading_client, symbol: str, notional: float):
+    if notional <= 0:
+        return
+    order = MarketOrderRequest(
+        symbol=symbol,
+        notional=round(notional, 2),
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+    )
+    trading_client.submit_order(order_data=order)
+
+def place_sell(trading_client, symbol: str, qty: float):
+    if qty <= 0:
+        return
+    order = MarketOrderRequest(
+        symbol=symbol,
+        qty=qty,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.DAY,
+    )
+    trading_client.submit_order(order_data=order)
+
+def market_is_open_now():
+    now = datetime.now(ET)
+    return now.weekday() < 5 and ((now.hour > 9 or (now.hour == 9 and now.minute >= 29)) and (now.hour < 16))
+
+def main():
+    trading_client, data_client, account_mode = get_clients()
+    log(f"Starting {ENGINE_LABEL} | {INDUSTRY} | {PORTFOLIO} | {account_mode} | tickers={TICKERS}")
+
+    while True:
+        try:
+            acct = trading_client.get_account()
+            equity = float(acct.equity)
+            cash = float(acct.cash)
+            positions = current_positions(trading_client)
+
+            status_lines = [
+                f"{ENGINE_LABEL}",
+                f"Industry: {INDUSTRY}",
+                f"Portfolio: {PORTFOLIO}",
+                f"Mode: {account_mode}",
+                f"Tickers: {', '.join(TICKERS)}",
+                "",
+                f"Equity: ${equity:,.2f}",
+                f"Cash: ${cash:,.2f}",
+                "",
+            ]
+
+            signals = {}
+            for sym in TICKERS:
+                sig = fetch_signal(data_client, sym)
+                signals[sym] = sig
+                if sig is None:
+                    status_lines.append(f"{sym}: waiting for enough data")
+                else:
+                    state = "BUY" if sig["buy"] else "SELL"
+                    status_lines.append(
+                        f"{sym}: {state} | Price ${sig['price']:.2f} | SMA10 ${sig['sma10']:.2f} | SMA20 ${sig['sma20']:.2f} | SMA50 ${sig['sma50']:.2f}"
+                    )
+
+            write_status(status_lines)
+
+            if market_is_open_now():
+                allocation = equity / max(len(TICKERS), 1)
+
+                for sym in TICKERS:
+                    sig = signals.get(sym)
+                    qty = positions.get(sym, 0.0)
+
+                    if sig is None:
+                        continue
+
+                    if sig["buy"] and qty <= 0:
+                        log(f"BUY {sym} | allocation={allocation:.2f}")
+                        place_buy(trading_client, sym, allocation)
+                    elif (not sig["buy"]) and qty > 0:
+                        log(f"SELL {sym} | qty={qty}")
+                        place_sell(trading_client, sym, qty)
+
+            time.sleep(60)
+
+        except Exception as e:
+            log(f"ERROR: {e}")
+            log(traceback.format_exc())
+            time.sleep(30)
+
+if __name__ == "__main__":
+    main()
+EOF
+
+  chmod +x "$HOME/CUSTOM_ENGINE"
+}
+
+create_guided_session() {
+  local industry
+  industry="$(prompt_industry)"
+  [ -n "$industry" ] || return 1
+  [ "$industry" != "Back" ] || return 1
+
+  local portfolio
+  portfolio="$(prompt_portfolio_type)"
+  [ -n "$portfolio" ] || return 1
+  [ "$portfolio" != "Back" ] || return 1
+
+  local engine_label
+  engine_label="$(input "Engine name:")"
+  engine_label="${engine_label:-Custom Engine}"
+
+  local ticker_csv
+  ticker_csv="$(ticker_csv_for_choice "$industry" "$portfolio")"
+  if [ -z "$ticker_csv" ]; then
+    warn "No ticker mapping found for that selection."
+    return 1
+  fi
+
+  write_custom_engine "$engine_label" "$ticker_csv" "$industry" "$portfolio"
+  chmod +x "$HOME/CUSTOM_ENGINE" >/dev/null 2>&1 || true
+
+  ok "Guided engine created: $engine_label"
+
+  [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
+  [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
+
+  exec "$HOME/CUSTOM_ENGINE"
 }
 
 run_engine_prompt_if_safe() {
@@ -1563,10 +1892,9 @@ run_engine_prompt_if_safe() {
   fi
 
   local action
-  action="$(choose "Run investment engine?" "Run investment engine" "Back")"
+  action="$(choose "Run investment engine?" "Run pre-made engine" "Back")"
 
-  # IMPORTANT: Back should exit the screen session so you return to the Home menu
-  if [ "$action" != "Run investment engine" ]; then
+  if [ "$action" != "Run pre-made engine" ]; then
     return 1
   fi
 
@@ -1581,9 +1909,16 @@ run_engine_prompt_if_safe() {
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
 
-  missing=()
-  [ -n "${ALPACA_PAPER_API_KEY:-}" ] || missing+=("ALPACA_PAPER_API_KEY")
-  [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || missing+=("ALPACA_PAPER_SECRET_KEY")
+  if [ "$engine" = "PMNY" ]; then
+    missing=()
+    [ -n "${ALPACA_PAPER_API_KEY:-}" ] || missing+=("ALPACA_PAPER_API_KEY")
+    [ -n "${ALPACA_PAPER_SECRET_KEY:-}" ] || missing+=("ALPACA_PAPER_SECRET_KEY")
+  else
+    missing=()
+    [ -n "${ALPACA_LIVE_API_KEY:-}" ] || missing+=("ALPACA_LIVE_API_KEY")
+    [ -n "${ALPACA_LIVE_SECRET_KEY:-}" ] || missing+=("ALPACA_LIVE_SECRET_KEY")
+  fi
+
   if [ "${#missing[@]}" -gt 0 ]; then
     warn "Missing keys in this session: ${missing[*]}"
     warn "Fix: ensure keys exist in ~/.profile or ~/.bashrc for user $(whoami)"
@@ -1594,8 +1929,9 @@ run_engine_prompt_if_safe() {
   return 0
 }
 
-# Clean screen so session UI never mixes with prior content
 printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+
+SESSION_MODE="${1:-premade}"
 
 if has_gum; then
   gum style --border rounded --padding "1 2" --border-foreground 39 \
@@ -1608,14 +1944,16 @@ echo "" >&2
 print_engine_blurbs
 echo "" >&2
 
-if run_engine_prompt_if_safe; then
-  # Engine ran (or we intentionally stayed), keep an interactive shell
-  exec bash -l
-else
-  # User hit Back → end this screen session → returns to ALGORA1 Home menu
+if [ "$SESSION_MODE" = "--guided" ]; then
+  create_guided_session || exit 0
   exit 0
+else
+  if run_engine_prompt_if_safe; then
+    exec bash -l
+  else
+    exit 0
+  fi
 fi
-
 SESSION
 
 sudo chmod +x /usr/local/bin/algora1-session
@@ -2624,9 +2962,14 @@ create_new_session() {
   screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session"
 }
 
+create_guided_session() {
+  local name="$1"
+  screen -S "$name" -dm bash -lc "cd \$HOME && export TERM=screen-256color && exec /usr/local/bin/algora1-session --guided"
+}
+
 engine_running_anywhere() {
-  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
-  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA|CUSTOM_ENGINE)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CUSTOM_ENGINE)( |$)' >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -2637,7 +2980,8 @@ log_for_engine() {
     TSLA) echo "tsla_investing.log" ;;
     NVDA) echo "nvda_investing.log" ;;
     PMNY) echo "pmny_investing.log" ;;
-    *) echo "pmny_investing.log" ;;
+    CUSTOM_ENGINE) echo "custom_engine_investing.log" ;;
+    *) echo "custom_engine_investing.log" ;;
   esac
 }
 
@@ -2647,17 +2991,17 @@ live_status_for_engine() {
     TSLA) echo "tsla_live_status.txt" ;;
     NVDA) echo "nvda_live_status.txt" ;;
     PMNY) echo "pmny_live_status.txt" ;;
-    *) echo "pmny_live_status.txt" ;;
+    CUSTOM_ENGINE) echo "custom_engine_live_status.txt" ;;
+    *) echo "custom_engine_live_status.txt" ;;
   esac
 }
 
 detect_running_engine_best_effort() {
-  # Match only executable basename (argv[0]), so plain "TSLA" args don't count.
   ps -eo args= 2>/dev/null | awk '
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
-      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY") {
+      if (cmd=="BEXP" || cmd=="TSLA" || cmd=="NVDA" || cmd=="PMNY" || cmd=="CUSTOM_ENGINE") {
         print cmd
         found=1
         exit 0
@@ -2693,8 +3037,11 @@ running_sessions_menu() {
 
   if [ "$cnt" = "0" ]; then
     local action
-    action="$(choose "Running session" "Start new session" "Back")"
-    [ "$action" = "Start new session" ] || return 0
+    action="$(choose "Running session" \
+      "Launch Pre-Made Engine" \
+      "Create Engine (Guided)" \
+      "Back")"
+    [ "$action" != "Back" ] || return 0
 
     # Enforce no session exists
     if has_any_session; then
@@ -2709,7 +3056,11 @@ running_sessions_menu() {
     name="$(echo "$name" | tr -d '[:space:]')"
     [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name. Use letters/numbers/_/- only."; return 0; }
 
-    create_new_session "$name"
+    if [ "$action" = "Launch Pre-Made Engine" ]; then
+      create_new_session "$name"
+    else
+      create_guided_session "$name" || return 0
+    fi
 
     hard_clear
     ui_view_mode_on
