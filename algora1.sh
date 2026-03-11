@@ -270,36 +270,18 @@ ui_choose() {
 
 ui_input() {
   local prompt="$1"
-  if ui_has_gum; then
-    gum input \
-      --prompt "$prompt " \
-      --prompt.foreground ${C_ACCENT} \
-      --cursor.foreground ${C_ACCENT} \
-      --placeholder.foreground ${C_MUTED} \
-      --placeholder ""
-  else
-    printf "%s " "$prompt" >&2
-    local v; read -r v
-    printf "%s\n" "$v"
-  fi
+  printf "%s " "$prompt" >&2
+  local v=""
+  read -r v || true
+  printf "%s\n" "$v"
 }
 
 ui_secret() {
   local prompt="$1"
-  if ui_has_gum; then
-    gum input --password \
-      --prompt "$prompt " \
-      --prompt.foreground ${C_ACCENT} \
-      --cursor.foreground ${C_ACCENT} \
-      --placeholder ""
-  else
-    printf "%s " "$prompt" >&2
-    stty -echo || true
-    local v; read -r v || true
-    stty echo || true
-    printf "\n" >&2
-    printf "%s\n" "$v"
-  fi
+  printf "%s " "$prompt" >&2
+  local v=""
+  read -r v || true
+  printf "%s\n" "$v"
 }
 
 ui_kv_list() {
@@ -541,12 +523,12 @@ ensure_macos_app_bundle_present() {
   local desktop_app="${HOME}/Desktop/ALGORA1.app"
 
   if is_trusted_algora1_app_bundle "$app_root"; then
-    ui_ok "macOS app bundle already present: $app_root"
+    ui_ok "macOS app bundle present: $app_root"
     return 0
   fi
 
   if is_trusted_algora1_app_bundle "$desktop_app"; then
-    ui_ok "macOS app bundle already present: $desktop_app"
+    ui_ok "macOS app bundle present: $desktop_app"
     return 0
   fi
 
@@ -2475,40 +2457,18 @@ choose() {
 
 secret() {
   local prompt="$1"
-  if has_gum; then
-    gum input --password \
-      --prompt "$prompt " \
-      --prompt.foreground 39 \
-      --cursor.foreground 39 \
-      --placeholder "" \
-      1>&2
-  else
-    printf "%s " "$prompt" >&2
-    stty -echo || true
-    local v=""
-    read -r v || true
-    stty echo || true
-    printf "\n" >&2
-    echo "$v"
-  fi
+  printf "%s " "$prompt" >&2
+  local v=""
+  read -r v || true
+  printf "%s\n" "$v"
 }
 
 input() {
   local prompt="$1"
-  if has_gum; then
-    # UI to stderr, captured value to stdout
-    gum input \
-      --prompt "$prompt " \
-      --prompt.foreground 39 \
-      --cursor.foreground 39 \
-      --placeholder.foreground 245 \
-      --placeholder "" \
-      --width 40 1>&2
-  else
-    printf "%s " "$prompt" >&2
-    local v; read -r v
-    echo "$v"
-  fi
+  printf "%s " "$prompt" >&2
+  local v=""
+  read -r v || true
+  printf "%s\n" "$v"
 }
 
 confirm() {
@@ -2650,12 +2610,12 @@ custom_zip_path() {
 }
 
 normalize_engine_id() {
-  printf "%s" "$1" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9'
+  printf "%s" "$1" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z' | cut -c1-4
 }
 
 validate_engine_id() {
   local id="$1"
-  [[ "$id" =~ ^[A-Z0-9]{1,8}$ ]]
+  [[ "$id" =~ ^[A-Z]{1,4}$ ]]
 }
 
 custom_engine_exists() {
@@ -2778,7 +2738,7 @@ build_custom_bundle_files() {
 
   cat > "${build_dir}/README.txt" <<CUSTOM_README_EOF
 ALGORA1 Custom Engine
-Engine ID: ${ENGINE_ID}
+Custom Engine Name: ${ENGINE_ID}
 Mode: ${ENGINE_MODE}
 Builder: ${ENGINE_BUILDER}
 Universe: ${UNIVERSE_TYPE}
@@ -2814,7 +2774,7 @@ print_custom_engine_summary() {
   load_custom_meta "$id" || return 1
 
   cat <<CUSTOM_SUMMARY_EOF
-Engine ID: ${ENGINE_ID}
+Custom Engine Name: ${ENGINE_ID}
 Mode: ${ENGINE_MODE}
 Builder: ${ENGINE_BUILDER}
 Universe: ${UNIVERSE_TYPE}
@@ -2835,7 +2795,7 @@ pause_return() {
   echo ""
   echo "Press Enter to return."
   ui_wait_enter_only
-  }
+}
 
 draw_header_once() {
   hard_clear
@@ -2853,17 +2813,17 @@ custom_engine_builder_guided() {
   hard_clear
 
   local raw_id id mode universe
-  raw_id="$(input "Enter Engine ID (1-8 chars, letters/numbers only):")"
+  raw_id="$(input "Enter Custom Engine Name (1-4 letters):")"
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    warn "Invalid Engine ID. Use 1-8 letters/numbers only."
+    warn "Invalid Custom Engine Name. Use 1-4 letters only."
     pause_return
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    warn "Engine ID already exists: $id"
+    warn "Custom Engine Name already exists: $id"
     pause_return
     return 0
   fi
@@ -2939,17 +2899,17 @@ custom_engine_builder_advanced() {
   hard_clear
 
   local raw_id id mode
-  raw_id="$(input "Enter Engine ID (1-8 chars, letters/numbers only):")"
+  raw_id="$(input "Enter Custom Engine Name (1-4 letters):")"
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    warn "Invalid Engine ID. Use 1-8 letters/numbers only."
+    warn "Invalid Custom Engine Name. Use 1-4 letters only."
     pause_return
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    warn "Engine ID already exists: $id"
+    warn "Custom Engine Name already exists: $id"
     pause_return
     return 0
   fi
@@ -3086,13 +3046,32 @@ custom_engines_menu() {
   ensure_custom_dirs
 
   while true; do
-    hard_clear
-    local selection
-    selection="$(choose "Custom Engines" \
-      "Custom Engine Builder (Guided)" \
-      "Custom Engine Builder (Advanced)" \
-      "View Custom Engines" \
-      "Back")"
+    draw_header_once
+
+    if has_gum; then
+      gum style --border rounded --padding "1 2" --border-foreground 39 \
+        "$(printf "Custom Engines\nCreate and manage custom engine packages.")"
+      echo ""
+    else
+      echo "Custom Engines"
+      echo ""
+    fi
+
+    local count selection
+    count="$(list_custom_engine_ids | sed '/^\s*$/d' | wc -l | tr -d ' ')"
+
+    if [ "${count}" = "0" ]; then
+      selection="$(choose "Custom Engines" \
+        "Custom Engine Builder (Guided)" \
+        "Custom Engine Builder (Advanced)" \
+        "Back")"
+    else
+      selection="$(choose "Custom Engines" \
+        "Custom Engine Builder (Guided)" \
+        "Custom Engine Builder (Advanced)" \
+        "View Custom Engines" \
+        "Back")"
+    fi
 
     case "$selection" in
       "Custom Engine Builder (Guided)") custom_engine_builder_guided ;;
