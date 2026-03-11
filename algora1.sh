@@ -736,9 +736,8 @@ build_local_custom_engine_file() {
   local industry="$1"
   local portfolio="$2"
   local engine_label="$3"
-  local username="$4"
-  local account_mode="$5"
-  local engine_file_name="$6"
+  local account_mode="$4"
+  local engine_file_name="$5"
 
   local ticker_csv=""
   case "$industry" in
@@ -755,21 +754,18 @@ build_local_custom_engine_file() {
   esac
 
   [ -n "$ticker_csv" ] || ui_die "No ticker mapping found for selected industry."
-  [ -n "$username" ] || ui_die "Username cannot be empty."
   [ "$account_mode" = "LIVE" ] || [ "$account_mode" = "PAPER" ] || ui_die "Account mode must be LIVE or PAPER."
 
   local engine_label_b64
   local ticker_csv_b64
   local industry_b64
   local portfolio_b64
-  local username_b64
   local account_mode_b64
 
   engine_label_b64="$(printf '%s' "$engine_label" | base64 | tr -d '\n')"
   ticker_csv_b64="$(printf '%s' "$ticker_csv" | base64 | tr -d '\n')"
   industry_b64="$(printf '%s' "$industry" | base64 | tr -d '\n')"
   portfolio_b64="$(printf '%s' "$portfolio" | base64 | tr -d '\n')"
-  username_b64="$(printf '%s' "$username" | base64 | tr -d '\n')"
   account_mode_b64="$(printf '%s' "$account_mode" | base64 | tr -d '\n')"
 
   local out="${HOME}/.config/algora1_setup/${engine_file_name}"
@@ -783,7 +779,6 @@ export ENGINE_LABEL_B64='${engine_label_b64}'
 export TICKER_CSV_B64='${ticker_csv_b64}'
 export INDUSTRY_B64='${industry_b64}'
 export PORTFOLIO_B64='${portfolio_b64}'
-export USERNAME_B64='${username_b64}'
 export ACCOUNT_MODE_B64='${account_mode_b64}'
 
 exec python3 - <<'PY'
@@ -807,7 +802,6 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 ENGINE_LABEL = base64.b64decode(os.environ["ENGINE_LABEL_B64"]).decode("utf-8")
 INDUSTRY = base64.b64decode(os.environ["INDUSTRY_B64"]).decode("utf-8")
 PORTFOLIO = base64.b64decode(os.environ["PORTFOLIO_B64"]).decode("utf-8")
-USERNAME = base64.b64decode(os.environ["USERNAME_B64"]).decode("utf-8")
 ACCOUNT_MODE = base64.b64decode(os.environ["ACCOUNT_MODE_B64"]).decode("utf-8")
 TICKERS = base64.b64decode(os.environ["TICKER_CSV_B64"]).decode("utf-8").split(",")
 
@@ -932,7 +926,6 @@ def market_is_open_now():
 
 def main():
     trading_client, data_client, account_mode = get_clients()
-    log(f"Starting {ENGINE_LABEL} | user={USERNAME} | {INDUSTRY} | {PORTFOLIO} | {account_mode} | tickers={TICKERS}")
 
     while True:
         try:
@@ -955,7 +948,6 @@ def main():
 
             status_lines = [
                 f"{ENGINE_LABEL}",
-                f"Username: {USERNAME}",
                 f"Industry: {INDUSTRY}",
                 f"Portfolio: {PORTFOLIO}",
                 f"Mode: {account_mode}",
@@ -3667,8 +3659,7 @@ create_guided_session() {
 }
 
 engine_running_anywhere() {
-  pgrep -af '(^|/)\.(\/)?(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
-  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CSTM)( |$)' >/dev/null 2>&1 && return 0
+  pgrep -af '(^|/)(BEXP|PMNY|TSLA|NVDA|CSTM(\.[^ /]+)?)( |$)' >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -3743,23 +3734,23 @@ EOF
 # ---- logs ----
 log_for_engine() {
   case "$1" in
-    BEXP) echo "bexp_investing.log" ;;
-    TSLA) echo "tsla_investing.log" ;;
-    NVDA) echo "nvda_investing.log" ;;
-    PMNY) echo "pmny_investing.log" ;;
-    CSTM) echo "custom_engine_investing.log" ;;
-    *) echo "custom_engine_investing.log" ;;
+    BEXP) echo "$HOME/bexp_investing.log" ;;
+    TSLA) echo "$HOME/tsla_investing.log" ;;
+    NVDA) echo "$HOME/nvda_investing.log" ;;
+    PMNY) echo "$HOME/pmny_investing.log" ;;
+    CSTM.*) ls -1t "$HOME"/.algora1_*_investing.log 2>/dev/null | head -n 1 ;;
+    *) echo "" ;;
   esac
 }
 
 live_status_for_engine() {
   case "$1" in
-    BEXP) echo "bexp_live_status.txt" ;;
-    TSLA) echo "tsla_live_status.txt" ;;
-    NVDA) echo "nvda_live_status.txt" ;;
-    PMNY) echo "pmny_live_status.txt" ;;
-    CSTM) echo "custom_engine_live_status.txt" ;;
-    *) echo "custom_engine_live_status.txt" ;;
+    BEXP) echo "$HOME/bexp_live_status.txt" ;;
+    TSLA) echo "$HOME/tsla_live_status.txt" ;;
+    NVDA) echo "$HOME/nvda_live_status.txt" ;;
+    PMNY) echo "$HOME/pmny_live_status.txt" ;;
+    CSTM.*) ls -1t "$HOME"/.algora1_*_live_status.txt 2>/dev/null | head -n 1 ;;
+    *) echo "" ;;
   esac
 }
 
@@ -3816,26 +3807,21 @@ running_sessions_menu() {
     fi
 
     local name default_name
-    local engine_name username account_pick account_mode
+    local engine_name account_pick account_mode
     local industry portfolio ticker_csv config_path engine_file_name safe_engine_name
 
     echo "" >&2
 
     if [ "$action" = "Launch Pre-Made Engine" ]; then
-      default_name="investing"
-    else
-      default_name="custom"
-    fi
+      local default_name="investing"
+      name="$(input "Session name (default: ${default_name}):")"
+      name="${name:-$default_name}"
+      name="$(echo "$name" | tr -d '[:space:]')"
+      [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name. Use letters/numbers/_/- only."; return 0; }
 
-    name="$(input "Session name (default: ${default_name}):")"
-    name="${name:-$default_name}"
-    name="$(echo "$name" | tr -d '[:space:]')"
-    [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name. Use letters/numbers/_/- only."; return 0; }
-
-    if [ "$action" = "Launch Pre-Made Engine" ]; then
       create_new_session "$name"
 
-    elif [ "$action" = "Create Custom Engine" ]; then
+    elif [ "$action" = "Launch Custom Engine" ]; then
       hard_clear
       draw_header_once
       engine_name="$(input "Custom engine name:")"
@@ -3845,22 +3831,24 @@ running_sessions_menu() {
       safe_engine_name="$(printf '%s' "$engine_name" | tr ' ' '_' | tr -cd 'A-Za-z0-9_-')"
       [ -n "$safe_engine_name" ] || { warn "Engine name must contain letters, numbers, _ or -."; return 0; }
 
+      name="custom_${safe_engine_name}"
+
       hard_clear
       draw_header_once
-      industry="$(prompt_industry || true)"
-      [ -n "$industry" ] || return 0
+      industry="$(prompt_industry)"
+      [ -n "$industry" ] || { warn "Industry selection cancelled."; return 0; }
       [ "$industry" != "Back" ] || return 0
 
       hard_clear
       draw_header_once
-      portfolio="$(prompt_portfolio_type || true)"
-      [ -n "$portfolio" ] || return 0
+      portfolio="$(prompt_portfolio_type)"
+      [ -n "$portfolio" ] || { warn "Portfolio selection cancelled."; return 0; }
       [ "$portfolio" != "Back" ] || return 0
 
       hard_clear
       draw_header_once
       account_pick="$(choose "Use this custom engine for" "Paper" "Live" "Back")"
-      [ -n "$account_pick" ] || return 0
+      [ -n "$account_pick" ] || { warn "Account mode selection cancelled."; return 0; }
       [ "$account_pick" != "Back" ] || return 0
 
       case "$account_pick" in
@@ -3886,10 +3874,6 @@ running_sessions_menu() {
       create_guided_session "$name" "$config_path" || return 0
     fi
 
-    hard_clear
-    ui_view_mode_on
-    screen -r "$name" || true
-    ui_view_mode_off
     hard_clear
     return 0
 
