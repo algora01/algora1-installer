@@ -2087,6 +2087,28 @@ esac
 
 ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
+CUSTOM_ROOT="${HOME}/.algora1_custom"
+CUSTOM_META_DIR="${CUSTOM_ROOT}/meta"
+CUSTOM_BUILD_DIR="${CUSTOM_ROOT}/builds"
+CUSTOM_EXPORT_DIR="${CUSTOM_ROOT}/exports"
+
+CUSTOM_INDUSTRIES=(
+  "Information Technology"
+  "Health Care"
+  "Financials"
+  "Consumer Discretionary"
+  "Communication Services"
+  "Consumer Staples"
+  "Energy"
+  "Diversify Exposure"
+)
+
+CUSTOM_PORTFOLIO_TYPES=(
+  "Growth"
+  "Stability"
+  "Efficiency"
+)
+
 has_gum() { command -v gum >/dev/null 2>&1; }
 
 # ----------------------------
@@ -2608,6 +2630,214 @@ detect_running_engine_best_effort() {
   '
 }
 
+ensure_custom_dirs() {
+  mkdir -p "${CUSTOM_META_DIR}" "${CUSTOM_BUILD_DIR}" "${CUSTOM_EXPORT_DIR}"
+}
+
+custom_meta_path() {
+  local id="$1"
+  printf "%s/%s.env\n" "${CUSTOM_META_DIR}" "${id}"
+}
+
+custom_build_dir() {
+  local id="$1"
+  printf "%s/%s\n" "${CUSTOM_BUILD_DIR}" "${id}"
+}
+
+custom_zip_path() {
+  local id="$1"
+  printf "%s/%s.zip\n" "${CUSTOM_EXPORT_DIR}" "${id}"
+}
+
+normalize_engine_id() {
+  printf "%s" "$1" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9'
+}
+
+validate_engine_id() {
+  local id="$1"
+  [[ "$id" =~ ^[A-Z0-9]{1,8}$ ]]
+}
+
+custom_engine_exists() {
+  local id="$1"
+  [ -f "$(custom_meta_path "$id")" ]
+}
+
+save_custom_meta() {
+  local id="$1"
+  shift
+
+  ensure_custom_dirs
+
+  local path
+  path="$(custom_meta_path "$id")"
+
+  : > "$path"
+  chmod 600 "$path"
+
+  while [ "$#" -ge 2 ]; do
+    printf '%s="%s"\n' "$1" "$2" >> "$path"
+    shift 2
+  done
+}
+
+load_custom_meta() {
+  local id="$1"
+  local path
+  path="$(custom_meta_path "$id")"
+  [ -f "$path" ] || return 1
+  # shellcheck disable=SC1090
+  source "$path"
+}
+
+list_custom_engine_ids() {
+  ensure_custom_dirs
+  find "${CUSTOM_META_DIR}" -maxdepth 1 -type f -name '*.env' -printf '%f\n' 2>/dev/null \
+    | sed 's/\.env$//' \
+    | sort
+}
+
+choose_custom_engine_id() {
+  local ids=()
+  while IFS= read -r id; do
+    [ -n "$id" ] && ids+=("$id")
+  done < <(list_custom_engine_ids)
+
+  [ "${#ids[@]}" -gt 0 ] || return 1
+  choose "Select Custom Engine" "${ids[@]}" "Back"
+}
+
+portfolio_description() {
+  case "$1" in
+    Growth) echo "Highest return focus (CAGR / Total Return)" ;;
+    Stability) echo "Lower drawdown / smoother ride" ;;
+    Efficiency) echo "Best risk-adjusted return" ;;
+    *) echo "" ;;
+  esac
+}
+
+default_algorithm_rule() {
+  echo "BUY if price > SMA50 and SMA10 > SMA20 and NOT(price < SMA20), else SELL"
+}
+
+industry_seed_tickers() {
+  case "$1" in
+    "Information Technology") echo "AAPL,MSFT,NVDA" ;;
+    "Health Care") echo "LLY,UNH,JNJ" ;;
+    "Financials") echo "JPM,GS,BLK" ;;
+    "Consumer Discretionary") echo "AMZN,TSLA,HD" ;;
+    "Communication Services") echo "GOOG,META,NFLX" ;;
+    "Consumer Staples") echo "COST,WMT,PG" ;;
+    "Energy") echo "XOM,CVX" ;;
+    "Diversify Exposure") echo "MSFT,LLY,JPM,AMZN,XOM" ;;
+    *) echo "" ;;
+  esac
+}
+
+suggest_portfolio_matches() {
+  local industry="$1"
+  local goal="$2"
+
+  case "$goal" in
+    Growth)
+      printf "%s\n" \
+        "${industry} Momentum Leaders" \
+        "${industry} High CAGR Basket" \
+        "${industry} Trend Growth Core"
+      ;;
+    Stability)
+      printf "%s\n" \
+        "${industry} Low Drawdown Core" \
+        "${industry} Defensive Trend Basket" \
+        "${industry} Stable Leaders"
+      ;;
+    Efficiency)
+      printf "%s\n" \
+        "${industry} Sharpe Optimized" \
+        "${industry} Sortino Leaders" \
+        "${industry} Calmar Core"
+      ;;
+    *)
+      printf "%s\n" \
+        "${industry} Core 1" \
+        "${industry} Core 2" \
+        "${industry} Core 3"
+      ;;
+  esac
+}
+
+build_custom_bundle_files() {
+  local id="$1"
+  local build_dir
+  build_dir="$(custom_build_dir "$id")"
+
+  rm -rf "$build_dir"
+  mkdir -p "$build_dir"
+
+  load_custom_meta "$id" || return 1
+
+  cat > "${build_dir}/README.txt" <<EOF
+ALGORA1 Custom Engine
+Engine ID: ${ENGINE_ID}
+Mode: ${ENGINE_MODE}
+Builder: ${ENGINE_BUILDER}
+Universe: ${UNIVERSE_TYPE}
+Tickers: ${TICKERS:-}
+Industry: ${INDUSTRY:-}
+Portfolio Type: ${PORTFOLIO_TYPE:-}
+Portfolio Match: ${PORTFOLIO_MATCH:-}
+Allocation Mode: ${ALLOCATION_MODE:-}
+Allocations: ${ALLOCATIONS:-}
+Stop Loss: ${STOP_LOSS:-}
+Algorithm: ${ALGORITHM_RULE:-}
+Created: ${CREATED_AT:-}
+EOF
+
+  cp "$(custom_meta_path "$id")" "${build_dir}/engine.env"
+
+  cat > "${build_dir}/${id}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "This custom engine package was created successfully."
+echo "Real runtime generation hook has not been wired yet."
+echo "Re-upload one current engine template and wire generation into build_custom_bundle_files()."
+EOF
+  chmod +x "${build_dir}/${id}"
+
+  (
+    cd "${build_dir}" &&
+    zip -qr "$(custom_zip_path "$id")" .
+  )
+}
+
+print_custom_engine_summary() {
+  local id="$1"
+  load_custom_meta "$id" || return 1
+
+  cat <<EOF
+Engine ID: ${ENGINE_ID}
+Mode: ${ENGINE_MODE}
+Builder: ${ENGINE_BUILDER}
+Universe: ${UNIVERSE_TYPE}
+Tickers: ${TICKERS:-}
+Industry: ${INDUSTRY:-}
+Portfolio Type: ${PORTFOLIO_TYPE:-}
+Portfolio Match: ${PORTFOLIO_MATCH:-}
+Allocation Mode: ${ALLOCATION_MODE:-}
+Allocations: ${ALLOCATIONS:-}
+Stop Loss: ${STOP_LOSS:-}
+Algorithm: ${ALGORITHM_RULE:-}
+Created: ${CREATED_AT:-}
+Zip: $(custom_zip_path "$id")
+EOF
+}
+
+pause_return() {
+  echo ""
+  echo "Press Enter to return."
+  ui_wait_enter_only
+  }
+
 draw_header_once() {
   hard_clear
   if has_gum; then
@@ -2904,6 +3134,7 @@ main_loop() {
     local selection
     selection="$(choose "Select an option" \
       "Running session" \
+      "Custom Engines" \
       "Live Status" \
       "Live Charts" \
       "System Activity" \
@@ -2911,6 +3142,7 @@ main_loop() {
 
     case "$selection" in
       "Running session") running_sessions_menu ;;
+      "Custom Engines") custom_engines_menu ;;
       "Live Status") live_status_menu ;;
       "Live Charts") live_charts_menu ;;
       "System Activity") troubleshoot_menu ;;
@@ -2925,11 +3157,10 @@ MENU
 
 sudo chmod +x /usr/local/bin/algora1
 
-if ! command -v screen >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -y >/dev/null 2>&1 || true
-    sudo apt-get install -y screen >/dev/null 2>&1 || true
-  fi
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update -y >/dev/null 2>&1 || true
+  command -v screen >/dev/null 2>&1 || sudo apt-get install -y screen >/dev/null 2>&1 || true
+  command -v zip >/dev/null 2>&1 || sudo apt-get install -y zip >/dev/null 2>&1 || true
 fi
 
 EOF
