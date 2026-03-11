@@ -1386,7 +1386,7 @@ install_control_panel_on_vm() {
   ui_step "[11/12] Installing Control Panel"
 
   ui_spin "Installing control panel scripts on VM…" ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
-    "${REMOTE_USER}@${ip}" "bash -s" <<'EOF'
+    "${REMOTE_USER}@${ip}" "bash -s" <<'REMOTE_INSTALL_EOF'
 set -euo pipefail
 
 has_gum() { command -v gum >/dev/null 2>&1; }
@@ -2776,7 +2776,7 @@ build_custom_bundle_files() {
 
   load_custom_meta "$id" || return 1
 
-  cat > "${build_dir}/README.txt" <<EOF
+  cat > "${build_dir}/README.txt" <<CUSTOM_README_EOF
 ALGORA1 Custom Engine
 Engine ID: ${ENGINE_ID}
 Mode: ${ENGINE_MODE}
@@ -2791,8 +2791,7 @@ Allocations: ${ALLOCATIONS:-}
 Stop Loss: ${STOP_LOSS:-}
 Algorithm: ${ALGORITHM_RULE:-}
 Created: ${CREATED_AT:-}
-EOF
-
+CUSTOM_README_EOF
   cp "$(custom_meta_path "$id")" "${build_dir}/engine.env"
 
   cat > "${build_dir}/${id}" <<'EOF'
@@ -2814,7 +2813,7 @@ print_custom_engine_summary() {
   local id="$1"
   load_custom_meta "$id" || return 1
 
-  cat <<EOF
+  cat <<CUSTOM_SUMMARY_EOF
 Engine ID: ${ENGINE_ID}
 Mode: ${ENGINE_MODE}
 Builder: ${ENGINE_BUILDER}
@@ -2829,7 +2828,7 @@ Stop Loss: ${STOP_LOSS:-}
 Algorithm: ${ALGORITHM_RULE:-}
 Created: ${CREATED_AT:-}
 Zip: $(custom_zip_path "$id")
-EOF
+CUSTOM_SUMMARY_EOF
 }
 
 pause_return() {
@@ -2847,6 +2846,261 @@ draw_header_once() {
     echo "ALGORA1 — Control Panel (one-session mode enabled)"
   fi
   echo ""
+}
+
+custom_engine_builder_guided() {
+  ensure_custom_dirs
+  hard_clear
+
+  local raw_id id mode universe
+  raw_id="$(input "Enter Engine ID (1-8 chars, letters/numbers only):")"
+  id="$(normalize_engine_id "$raw_id")"
+
+  if ! validate_engine_id "$id"; then
+    warn "Invalid Engine ID. Use 1-8 letters/numbers only."
+    pause_return
+    return 0
+  fi
+
+  if custom_engine_exists "$id"; then
+    warn "Engine ID already exists: $id"
+    pause_return
+    return 0
+  fi
+
+  mode="$(choose "Select mode" "Live" "Paper" "Back")"
+  [ "$mode" != "Back" ] || return 0
+
+  universe="$(choose "Invest by" "Ticker" "Industry Basket" "Back")"
+  [ "$universe" != "Back" ] || return 0
+
+  local tickers="" industry="" portfolio_type="" portfolio_match=""
+  local allocation_mode="Equal Weight"
+  local allocations=""
+  local stop_loss="6"
+  local algorithm_rule
+  algorithm_rule="$(default_algorithm_rule)"
+
+  if [ "$universe" = "Ticker" ]; then
+    local ticker
+    ticker="$(input "Enter ticker (example: AAPL):")"
+    ticker="$(printf "%s" "$ticker" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z')"
+    [ -n "$ticker" ] || { warn "Ticker cannot be empty."; pause_return; return 0; }
+
+    tickers="$ticker"
+
+    local sl
+    sl="$(input "Stop loss percent (default 6):")"
+    stop_loss="${sl:-6}"
+  else
+    industry="$(choose "Select industry" "${CUSTOM_INDUSTRIES[@]}" "Back")"
+    [ "$industry" != "Back" ] || return 0
+
+    portfolio_type="$(choose "Select portfolio type" "${CUSTOM_PORTFOLIO_TYPES[@]}" "Back")"
+    [ "$portfolio_type" != "Back" ] || return 0
+
+    local matches=()
+    while IFS= read -r m; do
+      [ -n "$m" ] && matches+=("$m")
+    done < <(suggest_portfolio_matches "$industry" "$portfolio_type")
+
+    portfolio_match="$(choose "Select portfolio match" "${matches[@]}" "Back")"
+    [ "$portfolio_match" != "Back" ] || return 0
+
+    tickers="$(industry_seed_tickers "$industry")"
+    allocation_mode="Model Portfolio"
+    allocations="AUTO"
+  fi
+
+  save_custom_meta "$id" \
+    ENGINE_ID "$id" \
+    ENGINE_MODE "$mode" \
+    ENGINE_BUILDER "Guided" \
+    UNIVERSE_TYPE "$universe" \
+    TICKERS "$tickers" \
+    INDUSTRY "$industry" \
+    PORTFOLIO_TYPE "$portfolio_type" \
+    PORTFOLIO_MATCH "$portfolio_match" \
+    ALLOCATION_MODE "$allocation_mode" \
+    ALLOCATIONS "$allocations" \
+    STOP_LOSS "$stop_loss" \
+    ALGORITHM_RULE "$algorithm_rule" \
+    CREATED_AT "$(date '+%Y-%m-%d %H:%M:%S')"
+
+  build_custom_bundle_files "$id"
+
+  hard_clear
+  print_custom_engine_summary "$id"
+  pause_return
+}
+
+custom_engine_builder_advanced() {
+  ensure_custom_dirs
+  hard_clear
+
+  local raw_id id mode
+  raw_id="$(input "Enter Engine ID (1-8 chars, letters/numbers only):")"
+  id="$(normalize_engine_id "$raw_id")"
+
+  if ! validate_engine_id "$id"; then
+    warn "Invalid Engine ID. Use 1-8 letters/numbers only."
+    pause_return
+    return 0
+  fi
+
+  if custom_engine_exists "$id"; then
+    warn "Engine ID already exists: $id"
+    pause_return
+    return 0
+  fi
+
+  mode="$(choose "Select mode" "Live" "Paper" "Back")"
+  [ "$mode" != "Back" ] || return 0
+
+  local ticker_csv
+  ticker_csv="$(input "Enter ticker(s), comma-separated (example: NVDA,TSLA):")"
+  ticker_csv="$(printf "%s" "$ticker_csv" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z,')"
+  [ -n "$ticker_csv" ] || { warn "Ticker list cannot be empty."; pause_return; return 0; }
+
+  local allocation_mode allocations
+  allocation_mode="$(choose "Allocation method" "Equal Weight" "Manual Percentages" "Back")"
+  [ "$allocation_mode" != "Back" ] || return 0
+
+  if [ "$allocation_mode" = "Manual Percentages" ]; then
+    allocations="$(input "Enter percentages matching ticker order (example: 50,50):")"
+  else
+    allocations="AUTO_EQUAL"
+  fi
+
+  local model_choice algorithm_rule
+  model_choice="$(choose "Entry/Exit model" "Default Trend" "Fast Trend" "Conservative Trend" "Custom SMA Lengths" "Back")"
+  [ "$model_choice" != "Back" ] || return 0
+
+  case "$model_choice" in
+    "Default Trend")
+      algorithm_rule="BUY if price > SMA50 and SMA10 > SMA20 and NOT(price < SMA20), else SELL"
+      ;;
+    "Fast Trend")
+      algorithm_rule="BUY if price > SMA30 and SMA5 > SMA10 and NOT(price < SMA10), else SELL"
+      ;;
+    "Conservative Trend")
+      algorithm_rule="BUY if price > SMA100 and SMA20 > SMA50 and NOT(price < SMA50), else SELL"
+      ;;
+    "Custom SMA Lengths")
+      local sma_fast sma_mid sma_slow
+      sma_fast="$(input "Fast SMA length:")"
+      sma_mid="$(input "Mid SMA length:")"
+      sma_slow="$(input "Slow SMA length:")"
+      algorithm_rule="BUY if price > SMA${sma_slow} and SMA${sma_fast} > SMA${sma_mid} and NOT(price < SMA${sma_mid}), else SELL"
+      ;;
+  esac
+
+  local stop_loss
+  stop_loss="$(input "Stop loss percent (default 6):")"
+  stop_loss="${stop_loss:-6}"
+
+  save_custom_meta "$id" \
+    ENGINE_ID "$id" \
+    ENGINE_MODE "$mode" \
+    ENGINE_BUILDER "Advanced" \
+    UNIVERSE_TYPE "Ticker Basket" \
+    TICKERS "$ticker_csv" \
+    INDUSTRY "" \
+    PORTFOLIO_TYPE "" \
+    PORTFOLIO_MATCH "" \
+    ALLOCATION_MODE "$allocation_mode" \
+    ALLOCATIONS "$allocations" \
+    STOP_LOSS "$stop_loss" \
+    ALGORITHM_RULE "$algorithm_rule" \
+    CREATED_AT "$(date '+%Y-%m-%d %H:%M:%S')"
+
+  build_custom_bundle_files "$id"
+
+  hard_clear
+  print_custom_engine_summary "$id"
+  pause_return
+}
+
+view_custom_engines_menu() {
+  ensure_custom_dirs
+
+  local picked
+  picked="$(choose_custom_engine_id || true)"
+  [ -n "${picked:-}" ] || return 0
+  [ "$picked" != "Back" ] || return 0
+
+  while true; do
+    hard_clear
+    print_custom_engine_summary "$picked"
+    echo ""
+
+    local action
+    action="$(choose "Custom Engine: $picked" \
+      "View Summary" \
+      "Rebuild Zip" \
+      "Show Backtest Info" \
+      "Delete" \
+      "Back")"
+
+    case "$action" in
+      "View Summary")
+        hard_clear
+        print_custom_engine_summary "$picked"
+        echo ""
+        pause_return
+        ;;
+      "Rebuild Zip")
+        build_custom_bundle_files "$picked"
+        ok "Zip rebuilt: $(custom_zip_path "$picked")"
+        pause_return
+        ;;
+      "Show Backtest Info")
+        load_custom_meta "$picked" || true
+        hard_clear
+        echo "Engine ID: ${ENGINE_ID}"
+        echo "Portfolio Match: ${PORTFOLIO_MATCH:-Not set}"
+        echo "Industry: ${INDUSTRY:-Not set}"
+        echo ""
+        echo "Backtest links are not wired yet."
+        echo ""
+        pause_return
+        ;;
+      "Delete")
+        if confirm "Delete custom engine '${picked}'?"; then
+          rm -f "$(custom_meta_path "$picked")"
+          rm -rf "$(custom_build_dir "$picked")"
+          rm -f "$(custom_zip_path "$picked")"
+          ok "Deleted ${picked}"
+          pause_return
+          return 0
+        fi
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  done
+}
+
+custom_engines_menu() {
+  ensure_custom_dirs
+
+  while true; do
+    hard_clear
+    local selection
+    selection="$(choose "Custom Engines" \
+      "Custom Engine Builder (Guided)" \
+      "Custom Engine Builder (Advanced)" \
+      "View Custom Engines" \
+      "Back")"
+
+    case "$selection" in
+      "Custom Engine Builder (Guided)") custom_engine_builder_guided ;;
+      "Custom Engine Builder (Advanced)") custom_engine_builder_advanced ;;
+      "View Custom Engines") view_custom_engines_menu ;;
+      *) return 0 ;;
+    esac
+  done
 }
 
 running_sessions_menu() {
@@ -3163,7 +3417,7 @@ if command -v apt-get >/dev/null 2>&1; then
   command -v zip >/dev/null 2>&1 || sudo apt-get install -y zip >/dev/null 2>&1 || true
 fi
 
-EOF
+REMOTE_INSTALL_EOF
 }
 
 ssh_into_instance_menu() {
