@@ -2161,40 +2161,41 @@ cursor_hide() { printf '\033[?25l' 2>/dev/null || true; }
 cursor_show() { printf '\033[?25h' 2>/dev/null || true; }
 
 center_box() {
-  # Usage: center_box $'line1\n\nline2'
   local msg="$1"
+  local min_w="${2:-0}"
+  local max_w="${3:-60}"
+  local center_y="${4:-1}"
 
-  # fixed terminal size for your product
-  local rows=24
-  local cols=80
+  local rows cols
+  rows="$(tput lines 2>/dev/null || echo 24)"
+  cols="$(tput cols 2>/dev/null || echo 80)"
 
-  # measure message: longest line + line count
   local longest=0
   local lines=0
   while IFS= read -r line; do
     lines=$((lines + 1))
-    local len="${#line}"
-    [ "$len" -gt "$longest" ] && longest="$len"
+    [ "${#line}" -gt "$longest" ] && longest="${#line}"
   done < <(printf "%b" "$msg")
 
-  # Gum adds border + padding "1 2"
-  # Total box height ~= message lines + 2(padding top/bot) + 2(border) = lines + 4
-  local box_h=$((lines + 5))
+  [ "$lines" -eq 0 ] && lines=1
 
-  # Vertically center the whole box
-  local pad_y=$(( (rows - box_h) / 2 ))
-  [ "$pad_y" -lt 0 ] && pad_y=0
-  for _ in $(seq 1 "$pad_y"); do echo ""; done
+  local inner_w=$((longest + 2))
+  [ "$inner_w" -lt "$min_w" ] && inner_w="$min_w"
+  [ "$inner_w" -gt "$max_w" ] && inner_w="$max_w"
 
-  # Box inner width:
-  # inner = longest line + 4 (2 spaces each side), clamp to look premium
-  local inner_w=$((longest + 4))
-  [ "$inner_w" -lt 44 ] && inner_w=44
-  [ "$inner_w" -gt 68 ] && inner_w=68   # fits nicely in 80 cols with margins
+  local total_w=$((inner_w + 6))
+  [ "$total_w" -gt "$cols" ] && total_w="$cols"
 
-  # Center the box horizontally. Approx total extra width from border+padding ~ 6 chars.
-  local left=$(( (cols - (inner_w + 6)) / 2 ))
+  local left=$(( (cols - total_w) / 2 ))
   [ "$left" -lt 0 ] && left=0
+
+  if [ "$center_y" = "1" ]; then
+    local box_h=$((lines + 4))
+    local pad_y=$(( (rows - box_h) / 2 ))
+    [ "$pad_y" -lt 0 ] && pad_y=0
+    printf '\033[H' 2>/dev/null || true
+    for _ in $(seq 1 "$pad_y"); do printf "\n"; done
+  fi
 
   if has_gum; then
     printf "%b" "$msg" | gum style \
@@ -2205,9 +2206,53 @@ center_box() {
       --margin "0 0 0 ${left}" \
       --align center
   else
-    # fallback: simple centered-ish (still vertically centered)
     printf "%b\n" "$msg"
   fi
+}
+
+small_footer_box() {
+  local msg="$1"
+  center_box "$msg" 24 28 0
+}
+
+show_centered_info_box() {
+  local msg="$1"
+  hard_clear
+  center_box "$msg" 0 52 1
+}
+
+pause_return_box() {
+  printf "\n"
+  small_footer_box "Press Enter to return."
+  ui_wait_enter_only
+}
+
+validate_stop_loss() {
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  [ "$v" -ge 0 ] && [ "$v" -le 20 ]
+}
+
+prompt_stop_loss() {
+  local prompt="${1:-Stop loss percent}"
+  local default="${2:-6}"
+  local sl=""
+
+  while true; do
+    sl="$(input "${prompt} (0-20, default ${default}):")"
+    sl="${sl:-$default}"
+
+    if validate_stop_loss "$sl"; then
+      printf "%s\n" "$sl"
+      return 0
+    fi
+
+    show_centered_info_box "Invalid stop loss.
+
+Enter a whole number from 0 to 20."
+    pause_return_box
+    draw_header_once
+  done
 }
 
 strip_ansi() {
@@ -2767,8 +2812,7 @@ CUSTOM_SUMMARY_EOF
 }
 
 pause_return() {
-  echo ""
-  echo "Press Enter to return."
+  show_centered_info_box "Press Enter to return."
   ui_wait_enter_only
 }
 
@@ -2788,26 +2832,17 @@ prompt_box_input() {
   local value=""
 
   hard_clear
-  if has_gum; then
-    value="$(gum input \
-      --prompt "" \
-      --value "" \
-      --placeholder "$prompt" \
-      --placeholder.foreground 245 \
-      --cursor.foreground 39)"
-    printf "%s\n" "$value"
-  else
-    center_box "$prompt"
-    printf "\n"
-    read -r value || true
-    printf "%s\n" "$value"
-  fi
-}
+  center_box "$prompt" 34 44 1
+  printf "\n"
 
-show_centered_info_box() {
-  local msg="$1"
-  hard_clear
-  center_box "$msg"
+  local cols left
+  cols="$(tput cols 2>/dev/null || echo 80)"
+  left=$(( (cols - 18) / 2 ))
+  [ "$left" -lt 0 ] && left=0
+
+  printf "%*s" "$left" "" >&2
+  read -r value || true
+  printf "%s\n" "$value"
 }
 
 show_custom_engine_summary_box() {
@@ -2816,6 +2851,9 @@ show_custom_engine_summary_box() {
 
   local stop_loss_display="${STOP_LOSS:-}"
   [ -n "$stop_loss_display" ] && stop_loss_display="${stop_loss_display}%"
+
+  local zip_name
+  zip_name="$(basename "$(custom_zip_path "$id")")"
 
   local summary
   summary="$(cat <<EOF
@@ -2831,16 +2869,10 @@ Allocation Mode: ${ALLOCATION_MODE:-}
 Allocations: ${ALLOCATIONS:-}
 Stop Loss: ${stop_loss_display}
 Created: ${CREATED_AT:-}
-Zip: $(custom_zip_path "$id")
+Zip: ${zip_name}
 EOF
 )"
   show_centered_info_box "$summary"
-}
-
-pause_return_box() {
-  printf "\n"
-  center_box "Press Enter to return."
-  ui_wait_enter_only
 }
 
 custom_engine_builder_guided() {
@@ -2860,7 +2892,7 @@ custom_engine_builder_guided() {
   fi
 
   if custom_engine_exists "$id"; then
-    show_centered_info_box "Custom Engine Name already exists:
+    show_centered_info_box "Custom Engine Name already exists.
 
   $id"
     pause_return_box
@@ -2890,9 +2922,7 @@ custom_engine_builder_guided() {
 
     tickers="$ticker"
 
-    local sl
-    sl="$(input "Stop loss percent (default 6):")"
-    stop_loss="${sl:-6}"
+    stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
   else
     draw_header_once
     industry="$(choose "Select industry" "${CUSTOM_INDUSTRIES[@]}" "Back")"
@@ -2947,7 +2977,7 @@ custom_engine_builder_advanced() {
   fi
 
   if custom_engine_exists "$id"; then
-    show_centered_info_box "Custom Engine Name already exists:
+    show_centered_info_box "Custom Engine Name already exists.
 
   $id"
     pause_return_box
@@ -2999,8 +3029,7 @@ custom_engine_builder_advanced() {
   esac
 
   local stop_loss
-  stop_loss="$(input "Stop loss percent (default 6):")"
-  stop_loss="${stop_loss:-6}"
+  stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
 
   save_custom_meta "$id" \
     ENGINE_ID "$id" \
@@ -3052,7 +3081,7 @@ view_custom_engines_menu() {
         build_custom_bundle_files "$picked"
         show_centered_info_box "Zip rebuilt successfully.
 
-        $(custom_zip_path "$picked")"
+        $(basename "$(custom_zip_path "$picked")")"
         pause_return_box
         ;;
       "Show Backtest Info")
@@ -3070,8 +3099,8 @@ view_custom_engines_menu() {
           rm -f "$(custom_meta_path "$picked")"
           rm -rf "$(custom_build_dir "$picked")"
           rm -f "$(custom_zip_path "$picked")"
-          ok "Deleted ${picked}"
-          pause_return
+          show_centered_info_box "Deleted ${picked}"
+          pause_return_box
           return 0
         fi
         ;;
