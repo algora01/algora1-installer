@@ -2218,7 +2218,7 @@ small_footer_box() {
 show_centered_info_box() {
   local msg="$1"
   hard_clear
-  center_box "$msg" 0 52 1
+  center_box "$msg" 0 56 1
 }
 
 pause_return_box() {
