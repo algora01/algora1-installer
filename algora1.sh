@@ -2694,12 +2694,35 @@ industry_seed_tickers() {
   esac
 }
 
-metric_focus_for_portfolio_type() {
-  case "$1" in
-    Growth) echo "CAGR, Total Return" ;;
-    Stability) echo "Max Drawdown, Annualized Volatility" ;;
-    Efficiency) echo "Sharpe, Sortino, Calmar" ;;
-    *) echo "" ;;
+suggest_portfolio_matches() {
+  local industry="$1"
+  local goal="$2"
+
+  case "$goal" in
+    Growth)
+      printf "%s\n" \
+        "${industry} Momentum Leaders" \
+        "${industry} High CAGR Basket" \
+        "${industry} Trend Growth Core"
+      ;;
+    Stability)
+      printf "%s\n" \
+        "${industry} Low Drawdown Core" \
+        "${industry} Defensive Trend Basket" \
+        "${industry} Stable Leaders"
+      ;;
+    Efficiency)
+      printf "%s\n" \
+        "${industry} Sharpe Optimized" \
+        "${industry} Sortino Leaders" \
+        "${industry} Calmar Core"
+      ;;
+    *)
+      printf "%s\n" \
+        "${industry} Core 1" \
+        "${industry} Core 2" \
+        "${industry} Core 3"
+      ;;
   esac
 }
 
@@ -2722,10 +2745,11 @@ Universe: ${UNIVERSE_TYPE}
 Tickers: ${TICKERS:-}
 Industry: ${INDUSTRY:-}
 Portfolio Type: ${PORTFOLIO_TYPE:-}
-Metric Focus: ${METRIC_FOCUS:-}
+Portfolio Match: ${PORTFOLIO_MATCH:-}
 Allocation Mode: ${ALLOCATION_MODE:-}
 Allocations: ${ALLOCATIONS:-}
-Stop Loss: ${STOP_LOSS:-}%
+Stop Loss: ${STOP_LOSS:-}
+Algorithm: ${ALGORITHM_RULE:-}
 Created: ${CREATED_AT:-}
 CUSTOM_README_EOF
   cp "$(custom_meta_path "$id")" "${build_dir}/engine.env"
@@ -2757,10 +2781,11 @@ Universe: ${UNIVERSE_TYPE}
 Tickers: ${TICKERS:-}
 Industry: ${INDUSTRY:-}
 Portfolio Type: ${PORTFOLIO_TYPE:-}
-Metric Focus: ${METRIC_FOCUS:-}
+Portfolio Match: ${PORTFOLIO_MATCH:-}
 Allocation Mode: ${ALLOCATION_MODE:-}
 Allocations: ${ALLOCATIONS:-}
-Stop Loss: ${STOP_LOSS:-}%
+Stop Loss: ${STOP_LOSS:-}
+Algorithm: ${ALGORITHM_RULE:-}
 Created: ${CREATED_AT:-}
 Zip: $(custom_zip_path "$id")
 CUSTOM_SUMMARY_EOF
@@ -2783,99 +2808,33 @@ draw_header_once() {
   echo ""
 }
 
-prompt_box_input() {
-  local prompt="$1"
-  local value=""
-
-  hard_clear
-  if has_gum; then
-    value="$(gum input \
-      --prompt "" \
-      --value "" \
-      --placeholder "$prompt" \
-      --placeholder.foreground 245 \
-      --cursor.foreground 39)"
-    printf "%s\n" "$value"
-  else
-    center_box "$prompt"
-    printf "\n"
-    read -r value || true
-    printf "%s\n" "$value"
-  fi
-}
-
-show_centered_info_box() {
-  local msg="$1"
-  hard_clear
-  center_box "$msg"
-}
-
-show_custom_engine_summary_box() {
-  local id="$1"
-  load_custom_meta "$id" || return 1
-
-  local stop_loss_display="${STOP_LOSS:-}"
-  [ -n "$stop_loss_display" ] && stop_loss_display="${stop_loss_display}%"
-
-  local summary
-  summary="$(cat <<EOF
-Custom Engine Name: ${ENGINE_ID}
-Mode: ${ENGINE_MODE}
-Builder: ${ENGINE_BUILDER}
-Universe: ${UNIVERSE_TYPE}
-Tickers: ${TICKERS:-}
-Industry: ${INDUSTRY:-}
-Portfolio Type: ${PORTFOLIO_TYPE:-}
-Metric Focus: ${METRIC_FOCUS:-}
-Allocation Mode: ${ALLOCATION_MODE:-}
-Allocations: ${ALLOCATIONS:-}
-Stop Loss: ${stop_loss_display}
-Created: ${CREATED_AT:-}
-Zip: $(custom_zip_path "$id")
-EOF
-)"
-  show_centered_info_box "$summary"
-}
-
-pause_return_box() {
-  printf "\n"
-  center_box "Press Enter to return."
-  ui_wait_enter_only
-}
-
 custom_engine_builder_guided() {
   ensure_custom_dirs
   hard_clear
 
   local raw_id id mode universe
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (1-4 letters):")"
+  raw_id="$(input "Enter Custom Engine Name (1-4 letters):")"
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    show_centered_info_box "Invalid Custom Engine Name.
-
-  Use 1-4 letters only."
-    pause_return_box
+    warn "Invalid Custom Engine Name. Use 1-4 letters only."
+    pause_return
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    show_centered_info_box "Custom Engine Name already exists:
-
-  $id"
-    pause_return_box
+    warn "Custom Engine Name already exists: $id"
+    pause_return
     return 0
   fi
 
-  draw_header_once
-  mode="$(choose "Select mode" "Live Engine" "Paper Engine" "Back")"
+  mode="$(choose "Select mode" "Live" "Paper" "Back")"
   [ "$mode" != "Back" ] || return 0
 
-  draw_header_once
   universe="$(choose "Invest by" "Ticker" "Industry Basket" "Back")"
   [ "$universe" != "Back" ] || return 0
 
-  local tickers="" industry="" portfolio_type="" metric_focus=""
+  local tickers="" industry="" portfolio_type="" portfolio_match=""
   local allocation_mode="Equal Weight"
   local allocations=""
   local stop_loss="6"
@@ -2894,15 +2853,19 @@ custom_engine_builder_guided() {
     sl="$(input "Stop loss percent (default 6):")"
     stop_loss="${sl:-6}"
   else
-    draw_header_once
     industry="$(choose "Select industry" "${CUSTOM_INDUSTRIES[@]}" "Back")"
     [ "$industry" != "Back" ] || return 0
 
-    draw_header_once
     portfolio_type="$(choose "Select portfolio type" "${CUSTOM_PORTFOLIO_TYPES[@]}" "Back")"
     [ "$portfolio_type" != "Back" ] || return 0
 
-    metric_focus="$(metric_focus_for_portfolio_type "$portfolio_type")"
+    local matches=()
+    while IFS= read -r m; do
+      [ -n "$m" ] && matches+=("$m")
+    done < <(suggest_portfolio_matches "$industry" "$portfolio_type")
+
+    portfolio_match="$(choose "Select portfolio match" "${matches[@]}" "Back")"
+    [ "$portfolio_match" != "Back" ] || return 0
 
     tickers="$(industry_seed_tickers "$industry")"
     allocation_mode="Model Portfolio"
@@ -2911,13 +2874,13 @@ custom_engine_builder_guided() {
 
   save_custom_meta "$id" \
     ENGINE_ID "$id" \
-    ENGINE_MODE "$(printf "%s" "$mode" | sed 's/ Engine$//')" \
+    ENGINE_MODE "$mode" \
     ENGINE_BUILDER "Guided" \
     UNIVERSE_TYPE "$universe" \
     TICKERS "$tickers" \
     INDUSTRY "$industry" \
     PORTFOLIO_TYPE "$portfolio_type" \
-    METRIC_FOCUS "$metric_focus" \
+    PORTFOLIO_MATCH "$portfolio_match" \
     ALLOCATION_MODE "$allocation_mode" \
     ALLOCATIONS "$allocations" \
     STOP_LOSS "$stop_loss" \
@@ -2926,8 +2889,9 @@ custom_engine_builder_guided() {
 
   build_custom_bundle_files "$id"
 
-  show_custom_engine_summary_box "$id"
-  pause_return_box
+  hard_clear
+  print_custom_engine_summary "$id"
+  pause_return
 }
 
 custom_engine_builder_advanced() {
@@ -2935,27 +2899,22 @@ custom_engine_builder_advanced() {
   hard_clear
 
   local raw_id id mode
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (1-4 letters):")"
+  raw_id="$(input "Enter Custom Engine Name (1-4 letters):")"
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    show_centered_info_box "Invalid Custom Engine Name.
-
-  Use 1-4 letters only."
-    pause_return_box
+    warn "Invalid Custom Engine Name. Use 1-4 letters only."
+    pause_return
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    show_centered_info_box "Custom Engine Name already exists:
-
-  $id"
-    pause_return_box
+    warn "Custom Engine Name already exists: $id"
+    pause_return
     return 0
   fi
 
-  draw_header_once
-  mode="$(choose "Select mode" "Live Engine" "Paper Engine" "Back")"
+  mode="$(choose "Select mode" "Live" "Paper" "Back")"
   [ "$mode" != "Back" ] || return 0
 
   local ticker_csv
@@ -2964,7 +2923,6 @@ custom_engine_builder_advanced() {
   [ -n "$ticker_csv" ] || { warn "Ticker list cannot be empty."; pause_return; return 0; }
 
   local allocation_mode allocations
-  draw_header_once
   allocation_mode="$(choose "Allocation method" "Equal Weight" "Manual Percentages" "Back")"
   [ "$allocation_mode" != "Back" ] || return 0
 
@@ -2975,7 +2933,6 @@ custom_engine_builder_advanced() {
   fi
 
   local model_choice algorithm_rule
-  draw_header_once
   model_choice="$(choose "Entry/Exit model" "Default Trend" "Fast Trend" "Conservative Trend" "Custom SMA Lengths" "Back")"
   [ "$model_choice" != "Back" ] || return 0
 
@@ -3004,13 +2961,13 @@ custom_engine_builder_advanced() {
 
   save_custom_meta "$id" \
     ENGINE_ID "$id" \
-    ENGINE_MODE "$(printf "%s" "$mode" | sed 's/ Engine$//')" \
+    ENGINE_MODE "$mode" \
     ENGINE_BUILDER "Advanced" \
     UNIVERSE_TYPE "Ticker Basket" \
     TICKERS "$ticker_csv" \
     INDUSTRY "" \
     PORTFOLIO_TYPE "" \
-    METRIC_FOCUS "" \
+    PORTFOLIO_MATCH "" \
     ALLOCATION_MODE "$allocation_mode" \
     ALLOCATIONS "$allocations" \
     STOP_LOSS "$stop_loss" \
@@ -3019,8 +2976,9 @@ custom_engine_builder_advanced() {
 
   build_custom_bundle_files "$id"
 
-  show_custom_engine_summary_box "$id"
-  pause_return_box
+  hard_clear
+  print_custom_engine_summary "$id"
+  pause_return
 }
 
 view_custom_engines_menu() {
@@ -3032,8 +2990,9 @@ view_custom_engines_menu() {
   [ "$picked" != "Back" ] || return 0
 
   while true; do
-    show_custom_engine_summary_box "$picked"
-    printf "\n"
+    hard_clear
+    print_custom_engine_summary "$picked"
+    echo ""
 
     local action
     action="$(choose "Custom Engine: $picked" \
@@ -3045,25 +3004,26 @@ view_custom_engines_menu() {
 
     case "$action" in
       "View Summary")
-        show_custom_engine_summary_box "$picked"
-        pause_return_box
+        hard_clear
+        print_custom_engine_summary "$picked"
+        echo ""
+        pause_return
         ;;
       "Rebuild Zip")
         build_custom_bundle_files "$picked"
-        show_centered_info_box "Zip rebuilt successfully.
-
-        $(custom_zip_path "$picked")"
-        pause_return_box
+        ok "Zip rebuilt: $(custom_zip_path "$picked")"
+        pause_return
         ;;
       "Show Backtest Info")
         load_custom_meta "$picked" || true
-        show_centered_info_box "Custom Engine Name: ${ENGINE_ID}
-        Industry: ${INDUSTRY:-Not set}
-        Portfolio Type: ${PORTFOLIO_TYPE:-Not set}
-        Metric Focus: ${METRIC_FOCUS:-Not set}
-
-        Backtest links are not wired yet."
-        pause_return_box
+        hard_clear
+        echo "Engine ID: ${ENGINE_ID}"
+        echo "Portfolio Match: ${PORTFOLIO_MATCH:-Not set}"
+        echo "Industry: ${INDUSTRY:-Not set}"
+        echo ""
+        echo "Backtest links are not wired yet."
+        echo ""
+        pause_return
         ;;
       "Delete")
         if confirm "Delete custom engine '${picked}'?"; then
@@ -3087,6 +3047,15 @@ custom_engines_menu() {
 
   while true; do
     draw_header_once
+
+    if has_gum; then
+      gum style --border rounded --padding "1 2" --border-foreground 39 \
+        "$(printf "Custom Engines\nCreate and manage custom engine packages.")"
+      echo ""
+    else
+      echo "Custom Engines"
+      echo ""
+    fi
 
     local count selection
     count="$(list_custom_engine_ids | sed '/^\s*$/d' | wc -l | tr -d ' ')"
