@@ -2778,10 +2778,10 @@ validate_engine_id() {
 
 sanitize_engine_id() {
   local raw cleaned trimmed
-  raw="$(printf "%s" "$1" | tr -d '\r')"
-  # Strip ANSI escape sequences and control characters that may leak from TUI state.
-  cleaned="$(printf "%s" "$raw" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g')"
-  cleaned="$(printf "%s" "$cleaned" | tr -d '\001-\031\177')"
+  raw="$(printf "%s" "$1")"
+  # Keep only ASCII printable + whitespace, then trim.
+  cleaned="$(printf "%s" "$raw" | LC_ALL=C tr -cd '\11\12\15\40-\176')"
+  cleaned="$(printf "%s" "$cleaned" | tr -d '\r')"
   trimmed="$(printf "%s" "$cleaned" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   [[ "$trimmed" =~ ^[A-Za-z]{4}$ ]] || return 1
   printf "%s" "$trimmed" | tr '[:lower:]' '[:upper:]'
@@ -3071,7 +3071,8 @@ prompt_box_input() {
   input_col=$((left + 3 + ${#prompt_label} + 1))
 
   printf '\033[%d;%dH' "$input_row" "$input_col" > /dev/tty
-  stty echo icanon 2>/dev/null || true
+  stty sane < /dev/tty 2>/dev/null || true
+  stty echo icanon < /dev/tty 2>/dev/null || true
   IFS= read -r value < /dev/tty || true
 
   cursor_hide
