@@ -1628,6 +1628,21 @@ run_engine_prompt_if_safe() {
 # Clean screen so session UI never mixes with prior content
 printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
+# If launched for a custom engine, run it directly — skip standard engine menu entirely
+if [ -n "${ALGORA1_CUSTOM_ENGINE_ID:-}" ]; then
+  [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
+  [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
+  local _custom_bin="${HOME}/.algora1_custom/builds/${ALGORA1_CUSTOM_ENGINE_ID}/${ALGORA1_CUSTOM_ENGINE_ID}"
+  if [ -f "$_custom_bin" ]; then
+    chmod +x "$_custom_bin" 2>/dev/null || true
+    exec "$_custom_bin"
+  else
+    echo "Custom engine binary not found: $_custom_bin" >&2
+    sleep 3
+    exit 1
+  fi
+fi
+
 if has_gum; then
   gum style --border rounded --padding "1 2" --border-foreground 39 \
     "$(printf "ALGORA1 session — One-session mode\nSelect engine")" >&2
@@ -3816,12 +3831,26 @@ run_custom_engine_session() {
     user_id="$(printf '%s' "$user_id" | tr -d '[:space:]')"
 
     if [ -z "$user_id" ]; then
-      show_notice_with_return "User ID cannot be empty."
+      # Show error inline in same box (red), matching Python engine style
+      _draw_sub_login_box "" "\033[38;5;196mUser ID cannot be empty!\033[0m"
+      sleep 1.5
       continue
     fi
 
+    # Dynamic bar width: inner - prefix("Verifying subscription... [") - suffix("] 100%")
+    # prefix=27 chars, suffix=7 chars → bar_w = inner - 34
+    local _cols_tmp _width_tmp _inner_tmp _bar_w
+    _cols_tmp="$(tput cols 2>/dev/null || echo 80)"
+    case "$_cols_tmp" in ''|*[!0-9]*) _cols_tmp=80 ;; esac
+    _width_tmp=76
+    [ "$_width_tmp" -gt $((_cols_tmp - 2)) ] && _width_tmp=$((_cols_tmp - 2))
+    [ "$_width_tmp" -lt 44 ] && _width_tmp=44
+    _inner_tmp=$(( _width_tmp - 4 ))
+    _bar_w=$(( _inner_tmp - 34 ))
+    [ "$_bar_w" -lt 10 ] && _bar_w=10
+
     # Synchronous progress bar — redraws box in-place, no background process
-    local _bar_w=24 _step _fill _empty _bar _pct _k
+    local _step _fill _empty _bar _pct _k
     for _step in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
       _fill=$(( _step * _bar_w / 20 ))
       _empty=$(( _bar_w - _fill ))
@@ -3846,7 +3875,9 @@ run_custom_engine_session() {
     if [ "$resp_ok" = "1" ]; then
       break
     else
-      show_notice_with_return "Subscription not active or invalid ID."
+      # Show error inline in same box (red), matching Python engine style
+      _draw_sub_login_box "$user_id" "\033[38;5;196mSubscription not active or invalid ID.\033[0m"
+      sleep 2
     fi
   done
 
