@@ -2146,8 +2146,12 @@ ui_wait_enter_only() {
 }
 
 hard_clear() {
-  # Clear screen + scrollback so the header box always starts at the top
-  printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+  # Clear screen + scrollback so the header box always starts at the top.
+  local seq=$'\033[H\033[2J\033[3J'
+  printf '%s' "$seq" 2>/dev/null || true
+  if [ -w /dev/tty ]; then
+    printf '%s' "$seq" > /dev/tty 2>/dev/null || true
+  fi
 }
 
 session_pretty_name() {
@@ -2294,6 +2298,52 @@ validate_stop_loss() {
   local v="$1"
   [[ "$v" =~ ^[0-9]+$ ]] || return 1
   [ "$v" -ge 0 ] && [ "$v" -le 20 ]
+}
+
+normalize_allocation_csv() {
+  # Strip spaces so "50, 50" becomes "50,50".
+  printf "%s" "$1" | tr -d '[:space:]'
+}
+
+validate_allocation_csv() {
+  local csv="$1"
+  local expected="$2"
+  local sum=0
+  local v
+
+  [ -n "$csv" ] || return 1
+  [[ "$expected" =~ ^[0-9]+$ ]] || return 1
+
+  IFS=',' read -r -a _alloc_arr <<< "$csv"
+  [ "${#_alloc_arr[@]}" -eq "$expected" ] || return 1
+
+  for v in "${_alloc_arr[@]}"; do
+    [[ "$v" =~ ^[0-9]+$ ]] || return 1
+    [ "$v" -ge 1 ] && [ "$v" -le 100 ] || return 1
+    sum=$((sum + v))
+  done
+
+  [ "$sum" -le 100 ]
+}
+
+prompt_allocation_csv() {
+  local ticker_csv="$1"
+  local expected=0
+  local allocations norm
+
+  IFS=',' read -r -a _tickers <<< "$ticker_csv"
+  expected="${#_tickers[@]}"
+
+  while true; do
+    allocations="$(input "Enter percentages matching ticker order (example: 50,50):")"
+    norm="$(normalize_allocation_csv "$allocations")"
+    if validate_allocation_csv "$norm" "$expected"; then
+      printf "%s\n" "$norm"
+      return 0
+    fi
+    show_notice_with_return "Invalid percentages. Enter ${expected} integers (1-100) separated by commas. Total must be <=100."
+    draw_header_once
+  done
 }
 
 prompt_stop_loss() {
@@ -2717,12 +2767,19 @@ custom_zip_path() {
 }
 
 normalize_engine_id() {
-  printf "%s" "$1" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z' | cut -c1-4
+  # Uppercase only; validation happens separately to avoid silently dropping chars.
+  printf "%s" "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:lower:]' '[:upper:]'
+}
+
+validate_engine_id_raw() {
+  local raw
+  raw="$(printf "%s" "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [[ "$raw" =~ ^[A-Za-z]{4}$ ]]
 }
 
 validate_engine_id() {
   local id="$1"
-  [[ "$id" =~ ^[A-Z]{1,4}$ ]]
+  [[ "$id" =~ ^[A-Z]{4}$ ]]
 }
 
 custom_engine_exists() {
@@ -2905,6 +2962,11 @@ print_custom_engine_summary() {
   local id="$1"
   load_custom_meta "$id" || return 1
 
+  local created_display="${CREATED_AT:-}"
+  if [ -n "$created_display" ] && [[ "$created_display" != *"ET"* ]]; then
+    created_display="${created_display} ET"
+  fi
+
   cat <<CUSTOM_SUMMARY_EOF
 Custom Engine Name: ${ENGINE_ID}
 Mode: ${ENGINE_MODE}
@@ -2917,7 +2979,7 @@ Metric Focus: ${METRIC_FOCUS:-}
 Allocation Mode: ${ALLOCATION_MODE:-}
 Allocations: ${ALLOCATIONS:-}
 Stop Loss: ${STOP_LOSS:-}%
-Created: ${CREATED_AT:-}
+Created: ${created_display}
 Zip: $(custom_zip_path "$id")
 CUSTOM_SUMMARY_EOF
 }
@@ -3021,6 +3083,11 @@ show_custom_engine_summary_box() {
   local zip_name
   zip_name="$(basename "$(custom_zip_path "$id")")"
 
+  local created_display="${CREATED_AT:-}"
+  if [ -n "$created_display" ] && [[ "$created_display" != *"ET"* ]]; then
+    created_display="${created_display} ET"
+  fi
+
   local summary
   summary="$(cat <<EOF
 Custom Engine Name: ${ENGINE_ID}
@@ -3034,7 +3101,7 @@ Metric Focus: ${METRIC_FOCUS:-}
 Allocation Mode: ${ALLOCATION_MODE:-}
 Allocations: ${ALLOCATIONS:-}
 Stop Loss: ${stop_loss_display}
-Created: ${CREATED_AT:-}
+Created: ${created_display}
 Zip: ${zip_name}
 
 Press Enter to return.
@@ -3049,16 +3116,20 @@ custom_engine_builder_guided() {
   hard_clear
 
   local raw_id id mode universe
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (1-4 letters):")"
+  raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
+  if ! validate_engine_id_raw "$raw_id"; then
+    show_notice_with_return "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
+    return 0
+  fi
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    show_notice_with_return "Invalid Custom Engine Name: use 1-4 letters only."
+    show_notice_with_return "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    show_notice_with_return "Invalid Custom Engine Name: use 1-4 letters only."
+    show_notice_with_return "Custom Engine Name already exists: $id"
     return 0
   fi
 
@@ -3128,7 +3199,7 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
     ALLOCATIONS "$allocations" \
     STOP_LOSS "$stop_loss" \
     ALGORITHM_RULE "$algorithm_rule" \
-    CREATED_AT "$(date '+%Y-%m-%d %H:%M:%S')"
+    CREATED_AT "$(TZ=America/New_York date '+%Y-%m-%d %H:%M:%S ET')"
 
   build_custom_bundle_files "$id"
 
@@ -3141,11 +3212,16 @@ custom_engine_builder_advanced() {
   hard_clear
 
   local raw_id id mode
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (1-4 letters):")"
+  raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
+  if ! validate_engine_id_raw "$raw_id"; then
+    show_centered_info_box "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
+    pause_return_box
+    return 0
+  fi
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    show_centered_info_box "Invalid Custom Engine Name: use 1-4 letters only."
+    show_centered_info_box "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     pause_return_box
     return 0
   fi
@@ -3184,7 +3260,7 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
   [ "$allocation_mode" != "Back" ] || return 0
 
   if [ "$allocation_mode" = "Manual Percentages" ]; then
-    allocations="$(input "Enter percentages matching ticker order (example: 50,50):")"
+    allocations="$(prompt_allocation_csv "$ticker_csv")"
   else
     allocations="AUTO_EQUAL"
   fi
@@ -3229,7 +3305,7 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
     ALLOCATIONS "$allocations" \
     STOP_LOSS "$stop_loss" \
     ALGORITHM_RULE "$algorithm_rule" \
-    CREATED_AT "$(date '+%Y-%m-%d %H:%M:%S')"
+    CREATED_AT "$(TZ=America/New_York date '+%Y-%m-%d %H:%M:%S ET')"
 
   build_custom_bundle_files "$id"
 
