@@ -612,6 +612,11 @@ EOF
 }
 
 if [ "${1:-}" = "--install-local" ]; then
+  # Set a trap on EXIT to drain any remaining bytes from curl's pipe.
+  # This fires AFTER exit 0 is called but BEFORE the process terminates,
+  # so curl can finish writing without getting EPIPE / error (56).
+  trap 'cat > /dev/null 2>/dev/null; trap - EXIT' EXIT
+
   _install_clean() {
     local C_BOX="" C_OK="" C_RESET=""
     if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
@@ -699,9 +704,6 @@ if [ "${1:-}" = "--install-local" ]; then
 
   ensure_gum >/dev/null 2>&1 || true
   _install_clean
-  # Drain ALL remaining bytes from curl's pipe so it can finish cleanly
-  # (prevents "curl: (56) Failure writing output to destination")
-  dd bs=65536 of=/dev/null 2>/dev/null || cat > /dev/null 2>/dev/null || true
   exit 0
 fi
 
@@ -3528,8 +3530,16 @@ view_custom_engines_menu() {
         fi
 
         if ! command -v streamlit >/dev/null 2>&1; then
-          show_notice_with_return "Streamlit not installed.\nRun: pip3 install streamlit --break-system-packages\n\nThen try again."
-          return 0
+          # Try to install it automatically
+          hard_clear
+          center_box "$(printf "Installing backtest dependencies...\nThis may take 1-2 minutes.")" 0 60 1
+          pip3 install streamlit plotly yfinance pandas numpy pytz \
+            --quiet --break-system-packages >/dev/null 2>&1 || true
+          # Check again after install attempt
+          if ! command -v streamlit >/dev/null 2>&1; then
+            show_notice_with_return "$(printf "Could not install streamlit automatically.\n\nRun manually in your shell:\npip3 install streamlit --break-system-packages\n\nThen try again.")"
+            return 0
+          fi
         fi
 
         nohup streamlit run "$bt_script" \
