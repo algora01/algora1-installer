@@ -636,7 +636,7 @@ fast_path_to_control_panel_if_ready() {
   ip="$(get_instance_ip)"
   [ -n "${ip}" ] || return 1
 
-  ui_ok "Instance already exists: ${INSTANCE_NAME} (${ZONE})"
+  ui_ok "Instance already exists & RUNNING: ${INSTANCE_NAME} (${ZONE})"
   ui_ok "Instance external IP: ${ip}"
 
   ssh-keygen -R "${ip}" >/dev/null 2>&1 || true
@@ -2326,23 +2326,85 @@ validate_allocation_csv() {
   [ "$sum" -le 100 ]
 }
 
+# Returns a human-readable explanation of why the allocation CSV is invalid.
+allocation_error_reason() {
+  local csv="$1"
+  local expected="$2"
+
+  [ -n "$csv" ] || { printf "No input provided."; return; }
+
+  # Check for decimals / fractions
+  if [[ "$csv" =~ \. ]]; then
+    printf "Decimals are not allowed. Use whole numbers only (e.g. 50,50)."; return
+  fi
+
+  # Check for special characters beyond digits and commas
+  if [[ "$csv" =~ [^0-9,] ]]; then
+    printf "Special characters are not allowed. Use digits and commas only (e.g. 50,50)."; return
+  fi
+
+  IFS=',' read -r -a _err_arr <<< "$csv"
+  local count="${#_err_arr[@]}"
+
+  if [ "$count" -ne "$expected" ]; then
+    printf "Expected %d value(s) — one per ticker — but got %d." "$expected" "$count"; return
+  fi
+
+  local sum=0
+  local v
+  for v in "${_err_arr[@]}"; do
+    if ! [[ "$v" =~ ^[0-9]+$ ]]; then
+      printf "Each value must be a positive whole number (e.g. 50,50)."; return
+    fi
+    if [ "$v" -eq 0 ]; then
+      printf "Zero allocations are not allowed. Each ticker must receive at least 1%%."; return
+    fi
+    if [ "$v" -gt 100 ]; then
+      printf "Each individual value cannot exceed 100%%."; return
+    fi
+    sum=$((sum + v))
+  done
+
+  if [ "$sum" -gt 100 ]; then
+    printf "Allocations sum to %d%%, which exceeds 100%%.\nReduce values so the total is 100%% or less." "$sum"; return
+  fi
+
+  printf "Invalid input. Check your values and try again."
+}
+
+# Global used to return the result without a subshell.
+_PROMPT_ALLOC_RESULT=""
+
 prompt_allocation_csv() {
   local ticker_csv="$1"
+  _PROMPT_ALLOC_RESULT=""
   local expected=0
-  local allocations norm
+  local allocations norm err_reason
 
   IFS=',' read -r -a _tickers <<< "$ticker_csv"
   expected="${#_tickers[@]}"
 
+  local rules_msg
+  rules_msg="$(printf \
+    "Tickers: %s\n\nEnter one whole-number percentage per ticker, comma-separated.\nRules:\n  • No decimals or fractions  (e.g. 50.5 is invalid)\n  • No special characters     (digits and commas only)\n  • Each value must be 1–100\n  • No zeros                  (every ticker needs at least 1%%)\n  • Total must be ≤ 100%%     (e.g. 60,30 is valid; 60,50 exceeds 100%%)\n  • Exactly %d value(s) required, one per ticker" \
+    "$ticker_csv" "$expected")"
+
   while true; do
-    allocations="$(input "Enter percentages matching ticker order (example: 50,50):")"
+    draw_header_once
+    # Show the allocation rules box before the input prompt
+    center_box "$rules_msg" 0 76 0
+    echo ""
+
+    allocations="$(input "Percentages (example: 50,50):")"
     norm="$(normalize_allocation_csv "$allocations")"
+
     if validate_allocation_csv "$norm" "$expected"; then
-      printf "%s\n" "$norm"
+      _PROMPT_ALLOC_RESULT="$norm"
       return 0
     fi
-    show_notice_with_return "Invalid percentages. Enter ${expected} integers (1-100) separated by commas. Total must be <=100."
-    draw_header_once
+
+    err_reason="$(allocation_error_reason "$norm" "$expected")"
+    show_notice_with_return "$(printf "Invalid Allocation\n\n%s\n\nPlease try again." "$err_reason")"
   done
 }
 
@@ -3002,13 +3064,17 @@ draw_header_once() {
   echo ""
 }
 
+# Global variable used by prompt_box_input to return the typed value
+# without a subshell, which corrupts tty state and captures ANSI noise.
+_PROMPT_BOX_RESULT=""
+
 prompt_box_input() {
   local prompt="$1"
+  _PROMPT_BOX_RESULT=""
   local value=""
   local rows cols width inner left top
   local prompt_label="Input:"
   local prompt_text=""
-  local input_max=20
 
   ui_restore_tty
   ui_drain_input
@@ -3075,7 +3141,9 @@ prompt_box_input() {
 
   cursor_hide
   ui_drain_input
-  printf '%s\n' "$value"
+  # Store result in global — never use $() to call this function, as the
+  # subshell breaks tty state and causes ANSI escape bytes to bleed into value.
+  _PROMPT_BOX_RESULT="$value"
 }
 
 show_custom_engine_summary_box() {
@@ -3121,7 +3189,8 @@ custom_engine_builder_guided() {
   hard_clear
 
   local raw_id id mode universe
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
+  prompt_box_input "Enter Custom Engine Name (4 letters):"
+  raw_id="$_PROMPT_BOX_RESULT"
   id="$(sanitize_engine_id "$raw_id")" || {
     show_notice_with_return "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     return 0
@@ -3211,7 +3280,8 @@ custom_engine_builder_advanced() {
   hard_clear
 
   local raw_id id mode
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
+  prompt_box_input "Enter Custom Engine Name (4 letters):"
+  raw_id="$_PROMPT_BOX_RESULT"
   id="$(sanitize_engine_id "$raw_id")" || {
     show_centered_info_box "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     pause_return_box
@@ -3252,7 +3322,8 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
   [ "$allocation_mode" != "Back" ] || return 0
 
   if [ "$allocation_mode" = "Manual Percentages" ]; then
-    allocations="$(prompt_allocation_csv "$ticker_csv")"
+    prompt_allocation_csv "$ticker_csv"
+    allocations="$_PROMPT_ALLOC_RESULT"
   else
     allocations="AUTO_EQUAL"
   fi
