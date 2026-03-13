@@ -3755,23 +3755,86 @@ run_custom_engine_session() {
   name="$(echo "$name" | tr -d '[:space:]')"
   [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name."; return 0; }
 
-  # Subscription check — uses prompt_box_input for consistent TUI styling
+  # Subscription check — matches Python engine login style exactly:
+  # simple box, cursor inline on prompt line, loading bar in same box.
   local CHECK_URL="http://34.59.74.231:3000/check"
   local user_id="" resp_ok resp_body
+  local _sub_input_row=0 _sub_input_col=0
+
+  # Draw the same 7-row box the Python engines use:
+  #   border / blank / "Enter your User ID: [text]" / blank / [loading] / blank / border
+  _draw_sub_login_box() {
+    local user_text="${1:-}" loading_text="${2:-}"
+    local rows cols width inner left top hline i
+    rows="$(tput lines 2>/dev/null || echo 24)"
+    cols="$(tput cols  2>/dev/null || echo 80)"
+    case "$rows" in ''|*[!0-9]*) rows=24 ;; esac
+    case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
+    width=76
+    [ "$width" -gt $((cols - 2)) ] && width=$((cols - 2))
+    [ "$width" -lt 44 ]            && width=44
+    inner=$(( width - 4 ))
+    left=$(( (cols - width) / 2 ))
+    [ "$left" -lt 0 ] && left=0
+    top=$(( (rows - 7) / 2 ))
+    [ "$top"  -lt 0 ] && top=0
+    hline=""; i=0
+    while [ "$i" -lt $((width - 2)) ]; do hline="${hline}─"; i=$((i+1)); done
+
+    local plabel="Enter your User ID (cus_xxx): "
+    local prompt_content="${plabel}${user_text}"
+    local pc_pad=$(( inner - ${#prompt_content} ))
+    [ "$pc_pad" -lt 0 ] && pc_pad=0
+    local lt_pad=$(( inner - ${#loading_text} ))
+    [ "$lt_pad" -lt 0 ] && lt_pad=0
+
+    printf '\033[H\033[2J\033[3J' > /dev/tty
+    i=0; while [ "$i" -lt "$top" ]; do printf '\n' > /dev/tty; i=$((i+1)); done
+
+    printf '%*s\033[38;5;39m╭%s╮\033[0m\n'              "$left" '' "$hline"                        > /dev/tty
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$((width-2))" ''       > /dev/tty
+    printf '%*s\033[38;5;39m│\033[0m %s%*s \033[38;5;39m│\033[0m\n' \
+           "$left" '' "$prompt_content" "$pc_pad" ''                                                > /dev/tty
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$((width-2))" ''       > /dev/tty
+    printf '%*s\033[38;5;39m│\033[0m %s%*s \033[38;5;39m│\033[0m\n' \
+           "$left" '' "$loading_text" "$lt_pad" ''                                                  > /dev/tty
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$((width-2))" ''       > /dev/tty
+    printf '%*s\033[38;5;39m╰%s╯\033[0m\n'              "$left" '' "$hline"                        > /dev/tty
+
+    # Cursor: border(1) + blank(1) + prompt row(1) = row top+3; col = left + "│ " + label
+    _sub_input_row=$(( top + 3 ))
+    _sub_input_col=$(( left + 3 + ${#plabel} ))
+  }
 
   while true; do
-    prompt_box_input "Enter your User ID (cus_xxx):"
-    user_id="$(printf '%s' "$_PROMPT_BOX_RESULT" | tr -d '[:space:]')"
+    _draw_sub_login_box "" ""
+    printf '\033[%d;%dH\033[?25h' "$_sub_input_row" "$_sub_input_col" > /dev/tty
+    stty sane    < /dev/tty 2>/dev/null || true
+    stty echo icanon < /dev/tty 2>/dev/null || true
+    IFS= read -r user_id < /dev/tty || true
+    printf '\033[?25l' > /dev/tty
+    user_id="$(printf '%s' "$user_id" | tr -d '[:space:]')"
 
     if [ -z "$user_id" ]; then
       show_notice_with_return "User ID cannot be empty."
       continue
     fi
 
-    show_centered_info_box "Verifying subscription..."
+    # Synchronous progress bar — redraws box in-place, no background process
+    local _bar_w=24 _step _fill _empty _bar _pct _k
+    for _step in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      _fill=$(( _step * _bar_w / 20 ))
+      _empty=$(( _bar_w - _fill ))
+      _bar=""; _k=0
+      while [ "$_k" -lt "$_fill"  ]; do _bar="${_bar}█"; _k=$((_k+1)); done
+      _k=0
+      while [ "$_k" -lt "$_empty" ]; do _bar="${_bar}░"; _k=$((_k+1)); done
+      _pct=$(( _step * 100 / 20 ))
+      _draw_sub_login_box "$user_id" "Verifying subscription... [${_bar}] ${_pct}%"
+      sleep 0.12 || true
+    done
 
-    resp_ok=0
-    resp_body=""
+    resp_ok=0; resp_body=""
     if command -v curl >/dev/null 2>&1; then
       resp_body="$(curl -s -X POST "$CHECK_URL" \
         -H 'Content-Type: application/json' \
