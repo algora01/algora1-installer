@@ -3834,7 +3834,9 @@ run_custom_engine_session() {
 
     if [ -z "$user_id" ]; then
       # Show error inline in same box (red), matching Python engine style
-      _draw_sub_login_box "" $'\033[38;5;196mUser ID cannot be empty!\033[0m'
+      _C_ERR="$(printf '\033[38;5;196m')"
+      _C_RST="$(printf '\033[0m')"
+      _draw_sub_login_box "" "${_C_ERR}User ID cannot be empty!${_C_RST}"
       sleep 1.5
       continue
     fi
@@ -3878,7 +3880,9 @@ run_custom_engine_session() {
       break
     else
       # Show error inline in same box (red), matching Python engine style
-      _draw_sub_login_box "$user_id" $'\033[38;5;196mSubscription not active or invalid ID.\033[0m'
+      _C_ERR="$(printf '\033[38;5;196m')"
+      _C_RST="$(printf '\033[0m')"
+      _draw_sub_login_box "$user_id" "${_C_ERR}Subscription not active or invalid ID.${_C_RST}"
       sleep 2
     fi
   done
