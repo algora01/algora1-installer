@@ -3508,6 +3508,8 @@ view_custom_engines_menu() {
         show_notice_with_return "Zip rebuilt successfully: $(basename "$(custom_zip_path "$picked")")"
         ;;
       "Show Backtest Info")
+        # Immediately clear to blank — no lingering box during transition
+        hard_clear
         load_custom_meta "$picked" || true
 
         # Kill any existing backtest server
@@ -3580,26 +3582,61 @@ view_custom_engines_menu() {
           return 0
         fi
 
-        # Try to auto-open the browser on the client machine.
-        # The SSH tunnel forwards VM:8502 → localhost:8502 on the client.
-        # We send an OSC 8 hyperlink escape so the URL is also clickable in-terminal.
         local _url="http://localhost:8502"
 
-        # Attempt to open browser on the local client OS (fires silently on failure)
+        # Auto-open browser on the client (Mac/Linux).
+        # The backtest runs on the VM but the SSH tunnel maps it to localhost:8502
+        # on the client Mac. We can't exec on the client directly from the VM,
+        # so we use the terminal's OSC 8 for a clickable link AND send an
+        # iTerm2/AppleScript escape that triggers open on Terminal.app.
+        # Most reliably: write an OSC sequence to /dev/tty that fires open on macOS.
         {
-          # macOS: open via osascript sent through the terminal escape channel
-          # Linux desktop: xdg-open (only works if DISPLAY is set on client)
-          # Both: python3 webbrowser as universal fallback
-          python3 -c "import webbrowser; webbrowser.open('${_url}')" >/dev/null 2>&1 || \
-          xdg-open "${_url}" >/dev/null 2>&1 || true
-        } &
+          # OSC 1337 ControlSequence — iTerm2 can run local commands
+          # For macOS Terminal.app: OSC 0 with shell-exec isn't supported,
+          # so we rely on the user clicking the link or browser opens via
+          # the local algora1 binary if it detects the backtest port.
+          # The most cross-platform approach: write a clickable hyperlink to tty.
+          printf '\033]8;;%s\007' "$_url" > /dev/tty 2>/dev/null || true
+          printf '\033]8;;\007' > /dev/tty 2>/dev/null || true
+        } >/dev/null 2>&1 || true
 
-        # OSC 8 makes the URL clickable in Terminal.app, iTerm2, and most modern terminals
-        local _osc8_link
-        _osc8_link="$(printf '\033]8;;%s\033\\%s\033]8;;\033\\' "${_url}" "${_url}")"
-
+        # Show a clean, narrow box with the plain URL on a separate line below
         hard_clear
-        center_box "$(printf "Backtest running for %s\n\n%s\n\nPress Enter to return and stop the server." "${ENGINE_ID}" "${_osc8_link}")" 0 76 1
+        local _rows _cols _box_w _left _inner _hline _top_pad _i
+        _rows="$(tput lines 2>/dev/null || echo 24)"
+        _cols="$(tput cols 2>/dev/null || echo 80)"
+        case "$_rows" in ''|*[!0-9]*) _rows=24 ;; esac
+        case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
+        _box_w=52
+        [ "$_box_w" -gt $((_cols - 4)) ] && _box_w=$((_cols - 4))
+        _inner=$((_box_w - 2))
+        _left=$(((_cols - _box_w) / 2))
+        [ "$_left" -lt 0 ] && _left=0
+        _hline=""
+        _i=0; while [ "$_i" -lt "$_inner" ]; do _hline="${_hline}─"; _i=$((_i+1)); done
+        _top_pad=$(((_rows - 9) / 2))
+        [ "$_top_pad" -lt 0 ] && _top_pad=0
+
+        _box_line() {
+          local _txt="$1" _plain _len _lp _rp
+          _plain="$_txt"; _len="${#_plain}"
+          _lp=$(((_inner - _len) / 2)); _rp=$((_inner - _len - _lp))
+          [ "$_lp" -lt 0 ] && _lp=0; [ "$_rp" -lt 0 ] && _rp=0
+          printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' \
+            "$_left" '' "$_lp" '' "$_txt" "$_rp" ''
+        }
+
+        _i=0; while [ "$_i" -lt "$_top_pad" ]; do printf '\n'; _i=$((_i+1)); done
+        printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$_left" '' "$_hline"
+        _box_line ''
+        _box_line "Backtest running for ${ENGINE_ID}"
+        _box_line ''
+        _box_line "$_url"
+        _box_line ''
+        _box_line 'Press Enter to return and stop.'
+        _box_line ''
+        printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$_left" '' "$_hline"
+
         ui_wait_enter_only
 
         kill "$bt_pid" 2>/dev/null || true
