@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_35ca66281dd140e694ed001d6535b963.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_4615149ffd0b4f3b93794568f05d0876.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5b3927a225ad4ff9aa59bf007d11735c.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e5d974d64db7408386000df44c4514a9.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_807b8251b3bb4466903ad79cd5bfc35f.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_766baefbee404509ae8b9641a31d897f.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a96cfb23e9f046039264fa9cd2b4cd24.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0df494b5a31b4706a9844b64474d5df8.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1532,8 +1532,8 @@ print_engine_blurbs
 echo "" >&2
 
 if run_engine_prompt_if_safe; then
-  # Engine ran (or we intentionally stayed), keep an interactive shell
-  exec bash -l
+  # When an engine exits, end the screen session so the control panel returns cleanly.
+  exit 0
 else
   # User hit Back → end this screen session → returns to ALGORA1 Home menu
   exit 0
@@ -2160,59 +2160,109 @@ session_pretty_name() {
 cursor_hide() { printf '\033[?25l' 2>/dev/null || true; }
 cursor_show() { printf '\033[?25h' 2>/dev/null || true; }
 
-center_box() {
+_visible_len() {
+  printf '%s' "$1" | sed -E $'s/\x1B\[[0-9;]*[A-Za-z]//g' | awk '{ print length($0) }'
+}
+
+_pad_right() {
+  local txt="$1"
+  local width="$2"
+  local plain len
+  plain="$(printf '%s' "$txt" | sed -E $'s/\x1B\[[0-9;]*[A-Za-z]//g')"
+  len=${#plain}
+  [ "$len" -gt "$width" ] && txt="${plain:0:$width}" && len="$width"
+  printf '%s%*s' "$txt" $((width - len)) ''
+}
+
+_pad_center() {
+  local txt="$1"
+  local width="$2"
+  local plain len lp rp
+  plain="$(printf '%s' "$txt" | sed -E $'s/\x1B\[[0-9;]*[A-Za-z]//g')"
+  len=${#plain}
+  [ "$len" -gt "$width" ] && txt="${plain:0:$width}" && len="$width"
+  lp=$(( (width - len) / 2 ))
+  rp=$(( width - len - lp ))
+  printf '%*s%s%*s' "$lp" '' "$txt" "$rp" ''
+}
+
+render_box() {
   local msg="$1"
   local min_w="${2:-0}"
   local max_w="${3:-60}"
   local center_y="${4:-1}"
+  local pad_y="${5:-1}"
+  local pad_x="${6:-2}"
+  local align="${7:-center}"
 
   local rows cols
   rows="$(tput lines 2>/dev/null || echo 24)"
   cols="$(tput cols 2>/dev/null || echo 80)"
+  [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
 
   local longest=0
   local lines=0
-  while IFS= read -r line; do
+  while IFS= read -r line || [ -n "$line" ]; do
     lines=$((lines + 1))
-    [ "${#line}" -gt "$longest" ] && longest="${#line}"
-  done < <(printf "%b" "$msg")
-
+    local vlen
+    vlen="$(_visible_len "$line")"
+    [ "$vlen" -gt "$longest" ] && longest="$vlen"
+  done < <(printf '%b' "$msg")
   [ "$lines" -eq 0 ] && lines=1
 
-  local inner_w=$((longest + 2))
+  local inner_w=$((longest + (pad_x * 2)))
   [ "$inner_w" -lt "$min_w" ] && inner_w="$min_w"
   [ "$inner_w" -gt "$max_w" ] && inner_w="$max_w"
+  [ "$inner_w" -gt $((cols - 4)) ] && inner_w=$((cols - 4))
+  [ "$inner_w" -lt 1 ] && inner_w=1
 
-  local total_w=$((inner_w + 6))
-  [ "$total_w" -gt "$cols" ] && total_w="$cols"
-
-  local left=$(( (cols - total_w) / 2 ))
+  local box_w=$((inner_w + 2))
+  local left=$(( (cols - box_w) / 2 ))
   [ "$left" -lt 0 ] && left=0
 
   if [ "$center_y" = "1" ]; then
-    local box_h=$((lines + 4))
-    local pad_y=$(( (rows - box_h) / 2 ))
-    [ "$pad_y" -lt 0 ] && pad_y=0
+    local box_h=$((lines + 2 + (pad_y * 2)))
+    local top_pad=$(( (rows - box_h) / 2 ))
+    [ "$top_pad" -lt 0 ] && top_pad=0
     printf '\033[H' 2>/dev/null || true
-    for _ in $(seq 1 "$pad_y"); do printf "\n"; done
+    for _ in $(seq 1 "$top_pad"); do printf '\n'; done
   fi
 
-  if has_gum; then
-    printf "%b" "$msg" | gum style \
-      --border rounded \
-      --padding "1 2" \
-      --border-foreground 39 \
-      --width "$inner_w" \
-      --margin "0 0 0 ${left}" \
-      --align center
-  else
-    printf "%b\n" "$msg"
-  fi
+  local hline
+  printf -v hline '%*s' "$inner_w" ''
+  hline="${hline// /─}"
+  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline"
+
+  for _ in $(seq 1 "$pad_y"); do
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$inner_w" ''
+  done
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    local content_w=$((inner_w - (pad_x * 2)))
+    [ "$content_w" -lt 0 ] && content_w=0
+    local core
+    if [ "$align" = "left" ]; then
+      core="$(_pad_right "$line" "$content_w")"
+    else
+      core="$(_pad_center "$line" "$content_w")"
+    fi
+    printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' "$left" '' "$pad_x" '' "$core" "$pad_x" ''
+  done < <(printf '%b' "$msg")
+
+  for _ in $(seq 1 "$pad_y"); do
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$inner_w" ''
+  done
+
+  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
+}
+
+center_box() {
+  render_box "$1" "${2:-0}" "${3:-60}" "${4:-1}" 1 2 center
 }
 
 small_footer_box() {
-  local msg="$1"
-  center_box "$msg" 24 28 0
+  render_box "$1" 0 32 0 0 1 center
 }
 
 show_centered_info_box() {
@@ -2221,9 +2271,18 @@ show_centered_info_box() {
   center_box "$msg" 0 52 1
 }
 
+show_simple_notice() {
+  local msg="$1"
+  hard_clear
+  center_box "$msg" 0 52 1
+  printf '\n'
+  small_footer_box 'Press Enter to return.'
+  ui_wait_enter_only
+}
+
 pause_return_box() {
-  printf "\n"
-  small_footer_box "Press Enter to return."
+  printf '\n'
+  small_footer_box 'Press Enter to return.'
   ui_wait_enter_only
 }
 
@@ -2237,21 +2296,20 @@ prompt_stop_loss() {
   local prompt="${1:-Stop loss percent}"
   local default="${2:-6}"
   local sl=""
+  local err=""
 
   while true; do
+    draw_header_once
+    [ -n "$err" ] && printf '\033[38;5;196m%s\033[0m\n\n' "$err" >&2
     sl="$(input "${prompt} (0-20, default ${default}):")"
     sl="${sl:-$default}"
 
     if validate_stop_loss "$sl"; then
-      printf "%s\n" "$sl"
+      printf '%s\n' "$sl"
       return 0
     fi
 
-    show_centered_info_box "Invalid stop loss.
-
-Enter a whole number from 0 to 20."
-    pause_return_box
-    draw_header_once
+    err='Enter a whole number from 0 to 20.'
   done
 }
 
@@ -2812,8 +2870,7 @@ CUSTOM_SUMMARY_EOF
 }
 
 pause_return() {
-  show_centered_info_box "Press Enter to return."
-  ui_wait_enter_only
+  pause_return_box
 }
 
 draw_header_once() {
@@ -2831,18 +2888,14 @@ prompt_box_input() {
   local prompt="$1"
   local value=""
 
-  hard_clear
-  center_box "$prompt" 34 44 1
-  printf "\n"
-
-  local cols left
-  cols="$(tput cols 2>/dev/null || echo 80)"
-  left=$(( (cols - 18) / 2 ))
-  [ "$left" -lt 0 ] && left=0
-
-  printf "%*s" "$left" "" >&2
-  read -r value || true
-  printf "%s\n" "$value"
+  ui_restore_tty
+  ui_drain_input
+  draw_header_once
+  render_box "$prompt" 34 60 0 1 2 left
+  printf '\n' >&2
+  IFS= read -r value < /dev/tty || true
+  ui_drain_input
+  printf '%s\n' "$value"
 }
 
 show_custom_engine_summary_box() {
@@ -2884,17 +2937,13 @@ custom_engine_builder_guided() {
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    show_centered_info_box "Invalid Custom Engine Name.
-
-  Use 1-4 letters only."
+    show_centered_info_box "Invalid Custom Engine Name: use 1-4 letters only."
     pause_return_box
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    show_centered_info_box "Custom Engine Name already exists.
-
-  $id"
+    show_centered_info_box "Custom Engine Name already exists: $id"
     pause_return_box
     return 0
   fi
@@ -2969,17 +3018,13 @@ custom_engine_builder_advanced() {
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    show_centered_info_box "Invalid Custom Engine Name.
-
-  Use 1-4 letters only."
+    show_centered_info_box "Invalid Custom Engine Name: use 1-4 letters only."
     pause_return_box
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    show_centered_info_box "Custom Engine Name already exists.
-
-  $id"
+    show_centered_info_box "Custom Engine Name already exists: $id"
     pause_return_box
     return 0
   fi
@@ -3079,19 +3124,16 @@ view_custom_engines_menu() {
         ;;
       "Rebuild Zip")
         build_custom_bundle_files "$picked"
-        show_centered_info_box "Zip rebuilt successfully.
-
-        $(basename "$(custom_zip_path "$picked")")"
+        show_centered_info_box "Zip rebuilt successfully: $(basename "$(custom_zip_path "$picked")")"
         pause_return_box
         ;;
       "Show Backtest Info")
         load_custom_meta "$picked" || true
         show_centered_info_box "Custom Engine Name: ${ENGINE_ID}
-        Industry: ${INDUSTRY:-Not set}
-        Portfolio Type: ${PORTFOLIO_TYPE:-Not set}
-        Metric Focus: ${METRIC_FOCUS:-Not set}
-
-        Backtest links are not wired yet."
+Industry: ${INDUSTRY:-Not set}
+Portfolio Type: ${PORTFOLIO_TYPE:-Not set}
+Metric Focus: ${METRIC_FOCUS:-Not set}
+Backtest links are not wired yet."
         pause_return_box
         ;;
       "Delete")
@@ -3226,9 +3268,7 @@ live_status_menu() {
 
   # 2) If none, show centered box and wait for Enter to return (no twitch)
   if [ -z "$eng" ]; then
-    hard_clear
-    center_box $'No active engine detected.\n\nPress Enter to return to the menu.'
-    ui_wait_enter_only
+    show_simple_notice "No active engine detected."
     hard_clear
     return 0
   fi
@@ -3255,11 +3295,9 @@ live_status_menu() {
     eng="$(detect_running_engine_best_effort || true)"
     if [ -z "$eng" ]; then
       trap - INT TERM HUP
-      ui_view_mode_off     # <-- IMPORTANT: restore original tty BEFORE message screen
+      ui_view_mode_off
 
-      hard_clear
-      center_box $'Engine stopped.\n\nPress Enter to return to the menu.'
-      ui_wait_enter_only   # this will temporarily lock input again, then restore
+      show_simple_notice "Engine stopped."
       hard_clear
       return 0
     fi
@@ -3302,7 +3340,7 @@ live_charts_menu() {
 
   if [ -z "$eng" ]; then
     hard_clear
-    center_box $'No active engine detected.\n\nPress Enter to return to the menu.'
+    center_box 'No active engine detected.'
     ui_wait_enter_only
     hard_clear
     return 0
@@ -3377,7 +3415,7 @@ troubleshoot_menu() {
   # If none running: show centered screen and return on Enter (no typing, no cursor)
   if [ -z "$eng" ]; then
     hard_clear
-    center_box $'No active engine detected.\n\nPress Enter to return to the menu.'
+    center_box 'No active engine detected.'
     ui_wait_enter_only
     hard_clear
     return 0
