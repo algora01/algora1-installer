@@ -699,8 +699,9 @@ if [ "${1:-}" = "--install-local" ]; then
 
   ensure_gum >/dev/null 2>&1 || true
   _install_clean
-  # Drain remaining pipe input so curl doesn't get a broken-pipe error (56)
-  exec </dev/null
+  # Drain ALL remaining bytes from curl's pipe so it can finish cleanly
+  # (prevents "curl: (56) Failure writing output to destination")
+  dd bs=65536 of=/dev/null 2>/dev/null || cat > /dev/null 2>/dev/null || true
   exit 0
 fi
 
@@ -725,9 +726,14 @@ fast_path_to_control_panel_if_ready() {
   ui_info "Updating control panel on VM…"
   install_control_panel_on_vm "${ip}"
 
+  # Ensure backtest dependencies are installed (idempotent, silent)
+  ui_spin "Verifying backtest dependencies…" \
+    ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
+    "${REMOTE_USER}@${ip}" \
+    "pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || true"
 
   if [ "$(detect_os)" = "macos" ]; then
-    ensure_macos_app_bundle_present "${ALGORA1_ICNS_PATH:-}" || true
+    ensure_macos_app_bundle_present "${ALGORA1_ICNS_PATH:-}" >/dev/null 2>&1 || true
   fi
 
   ui_info "Launching control panel…"
@@ -4420,6 +4426,13 @@ main() {
   copy_engines_from_wix_to_vm "${ip}"
 
   install_control_panel_on_vm "${ip}"
+
+  # Ensure backtest dependencies are installed
+  local key_path="${HOME}/.ssh/${KEY_NAME}"
+  ui_spin "Installing backtest dependencies…" \
+    ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
+    "${REMOTE_USER}@${ip}" \
+    "pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || true"
 
   completion_screen "${ip}"
 }
