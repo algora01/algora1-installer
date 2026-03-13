@@ -2771,15 +2771,20 @@ normalize_engine_id() {
   printf "%s" "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:lower:]' '[:upper:]'
 }
 
-validate_engine_id_raw() {
-  local raw
-  raw="$(printf "%s" "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  [[ "$raw" =~ ^[A-Za-z]{4}$ ]]
-}
-
 validate_engine_id() {
   local id="$1"
   [[ "$id" =~ ^[A-Z]{4}$ ]]
+}
+
+sanitize_engine_id() {
+  local raw trimmed letters
+  raw="$(printf "%s" "$1" | tr -d '\r')"
+  trimmed="$(printf "%s" "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  letters="$(printf "%s" "$trimmed" | tr -cd 'A-Za-z')"
+  # Must be exactly 4 letters and nothing else.
+  [ "${#letters}" -eq 4 ] || return 1
+  [ "${#letters}" -eq "${#trimmed}" ] || return 1
+  printf "%s" "$letters" | tr '[:lower:]' '[:upper:]'
 }
 
 custom_engine_exists() {
@@ -3117,16 +3122,10 @@ custom_engine_builder_guided() {
 
   local raw_id id mode universe
   raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
-  if ! validate_engine_id_raw "$raw_id"; then
+  id="$(sanitize_engine_id "$raw_id")" || {
     show_notice_with_return "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     return 0
-  fi
-  id="$(normalize_engine_id "$raw_id")"
-
-  if ! validate_engine_id "$id"; then
-    show_notice_with_return "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
-    return 0
-  fi
+  }
 
   if custom_engine_exists "$id"; then
     show_notice_with_return "Custom Engine Name already exists: $id"
@@ -3213,18 +3212,11 @@ custom_engine_builder_advanced() {
 
   local raw_id id mode
   raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
-  if ! validate_engine_id_raw "$raw_id"; then
+  id="$(sanitize_engine_id "$raw_id")" || {
     show_centered_info_box "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     pause_return_box
     return 0
-  fi
-  id="$(normalize_engine_id "$raw_id")"
-
-  if ! validate_engine_id "$id"; then
-    show_centered_info_box "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
-    pause_return_box
-    return 0
-  fi
+  }
 
   if custom_engine_exists "$id"; then
     show_centered_info_box "Custom Engine Name already exists: $id"
