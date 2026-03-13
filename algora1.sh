@@ -3759,96 +3759,38 @@ run_custom_engine_session() {
   local CHECK_URL="http://34.59.74.231:3000/check"
   local user_id="" resp_ok resp_body
 
-  # Helper: draw the full subscription box with cursor positioned inside for input
-  _draw_sub_input() {
-    local _status="${1:-}"  # optional status line below input
-    local _rows _cols _width _inner _left _top _hline _i
-    _rows="$(tput lines 2>/dev/null || echo 24)"
-    _cols="$(tput cols 2>/dev/null || echo 80)"
-    case "$_rows" in ''|*[!0-9]*) _rows=24 ;; esac
-    case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
-    _width=76
-    [ "$_width" -gt $((_cols - 2)) ] && _width=$((_cols - 2))
-    [ "$_width" -lt 44 ] && _width=44
-    _inner=$((_width - 4))
-    _left=$(((_cols - _width) / 2))
-    [ "$_left" -lt 0 ] && _left=0
-    _top=$(((_rows - 11) / 2))
-    [ "$_top" -lt 0 ] && _top=0
-    _hline=""
-    _i=0; while [ "$_i" -lt $((_width - 2)) ]; do _hline="${_hline}─"; _i=$((_i+1)); done
-
-    printf '\033[H\033[2J\033[3J'
-    _i=0; while [ "$_i" -lt "$_top" ]; do printf '\n'; _i=$((_i+1)); done
-
-    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$_left" '' "$_hline"
-    # Title row
-    local _title="ALGORA1 — Custom Engine" _tl _tr _tp
-    _tl="${#_title}"; _tr=$(( (_inner - _tl) / 2 )); _tp=$(( _inner - _tl - _tr ))
-    [ "$_tr" -lt 0 ] && _tr=0; [ "$_tp" -lt 0 ] && _tp=0
-    printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$_tr" '' "$_title" "$_tp" ''
-    # Blank
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
-    # Prompt label row
-    local _plabel="Enter your User ID (cus_xxx):" _pl _pp
-    _pl="${#_plabel}"; _pp=$(( _inner - _pl ))
-    [ "$_pp" -lt 0 ] && _pp=0
-    printf '%*s\033[38;5;39m│\033[0m  %s%*s  \033[38;5;39m│\033[0m\n' "$_left" '' "$_plabel" "$_pp" ''
-    # Input row (cursor goes here)
-    printf '%*s\033[38;5;39m│\033[0m  %-*s  \033[38;5;39m│\033[0m\n' "$_left" '' "$((_inner))" "Input:"
-    # Blank
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
-    # Status row
-    if [ -n "$_status" ]; then
-      local _sl _sr _sp
-      _sl="${#_status}"; _sp=$(( (_inner - _sl) / 2 )); _sr=$(( _inner - _sl - _sp ))
-      [ "$_sp" -lt 0 ] && _sp=0; [ "$_sr" -lt 0 ] && _sr=0
-      printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$_sp" '' "$_status" "$_sr" ''
-    else
-      printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
-    fi
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
-    printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$_left" '' "$_hline"
-
-    # Return cursor position for the Input row (row = _top + 5, col = _left + 3 + len("Input:") + 1)
-    local _input_row=$(( _top + 5 ))
-    local _input_col=$(( _left + 3 + 7 ))   # 7 = len("Input:")+ space
-    printf '\033[%d;%dH' "$_input_row" "$_input_col"
-  }
-
   while true; do
-    _draw_sub_input ""
-    printf '\033[?25h'
-    stty sane < /dev/tty 2>/dev/null || true
-    stty echo icanon < /dev/tty 2>/dev/null || true
-    IFS= read -r user_id < /dev/tty || true
-    printf '\033[?25l'
+    # Use identical prompt_box_input flow as the standard engine name input
+    prompt_box_input "Enter your User ID (cus_xxx):"
+    user_id="$_PROMPT_BOX_RESULT"
     user_id="$(printf '%s' "$user_id" | tr -d '[:space:]')"
 
     if [ -z "$user_id" ]; then
-      _draw_sub_input "User ID cannot be empty."
-      sleep 1.5
+      show_notice_with_return "User ID cannot be empty."
       continue
     fi
 
-    # Animate progress bar inline inside the box
-    local _vbar_w=24 _vi _vf _ve _vb _vp _vs
-    _vi=0
-    while [ "$_vi" -lt 40 ]; do
-      _vf=$(( (_vi + 1) * _vbar_w / 40 ))
-      _ve=$(( _vbar_w - _vf ))
-      _vp=$(( (_vi + 1) * 100 / 40 ))
-      _vb=""
-      local _vj=0
-      while [ "$_vj" -lt "$_vf" ]; do _vb="${_vb}█"; _vj=$((_vj+1)); done
-      _vj=0
-      while [ "$_vj" -lt "$_ve" ]; do _vb="${_vb}░"; _vj=$((_vj+1)); done
-      _vs="$(printf '%s: [%s] %3d%%' "$user_id" "$_vb" "$_vp")"
-      _draw_sub_input "$_vs"
-      _vi=$((_vi+1))
-      sleep 0.05 || true
-    done &
-    local _anim_pid=$!
+    # Animate progress bar while curl runs in background
+    local _vbar_w=24 _vi _vf _ve _vb _vp _vs _anim_pid
+    {
+      _vi=0
+      while [ "$_vi" -lt 40 ]; do
+        _vf=$(( (_vi + 1) * _vbar_w / 40 ))
+        _ve=$(( _vbar_w - _vf ))
+        _vp=$(( (_vi + 1) * 100 / 40 ))
+        _vb=""
+        local _vj=0
+        while [ "$_vj" -lt "$_vf" ]; do _vb="${_vb}█"; _vj=$((_vj+1)); done
+        _vj=0
+        while [ "$_vj" -lt "$_ve" ]; do _vb="${_vb}░"; _vj=$((_vj+1)); done
+        _vs="$(printf 'Verifying subscription... [%s] %3d%%' "$_vb" "$_vp")"
+        hard_clear
+        center_box "$(printf "%s\n\n%s" "$user_id" "$_vs")" 0 64 1
+        _vi=$((_vi+1))
+        sleep 0.05 || true
+      done
+    } &
+    _anim_pid=$!
 
     resp_ok=0
     resp_body=""
@@ -3866,8 +3808,7 @@ run_custom_engine_session() {
     if [ "$resp_ok" = "1" ]; then
       break
     else
-      _draw_sub_input "Subscription not active or invalid ID."
-      sleep 2
+      show_notice_with_return "Subscription not active or invalid ID."
     fi
   done
 
