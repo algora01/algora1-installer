@@ -2268,22 +2268,23 @@ small_footer_box() {
 show_centered_info_box() {
   local msg="$1"
   hard_clear
-  center_box "$msg" 0 52 1
+  center_box "$msg" 0 76 1
+}
+
+show_notice_with_return() {
+  local msg="$1"
+  hard_clear
+  center_box "$(printf "%s\n\nPress Enter to return." "$msg")" 0 76 1
+  ui_wait_enter_only
 }
 
 show_simple_notice() {
   local msg="$1"
-  hard_clear
-  center_box "$msg" 0 52 1
-  printf '\n'
-  small_footer_box 'Press Enter to return.'
-  ui_wait_enter_only
+  show_notice_with_return "$msg"
 }
 
 pause_return_box() {
-  printf '\n'
-  small_footer_box 'Press Enter to return.'
-  ui_wait_enter_only
+  show_notice_with_return ""
 }
 
 validate_stop_loss() {
@@ -2560,17 +2561,17 @@ choose() {
 
 secret() {
   local prompt="$1"
-  printf "%s " "$prompt" >&2
   local v=""
-  read -r v || true
+  printf "%s " "$prompt" >&2
+  IFS= read -r v < /dev/tty || true
   printf "%s\n" "$v"
 }
 
 input() {
   local prompt="$1"
-  printf "%s " "$prompt" >&2
   local v=""
-  read -r v || true
+  printf "%s " "$prompt" >&2
+  IFS= read -r v < /dev/tty || true
   printf "%s\n" "$v"
 }
 
@@ -2749,6 +2750,11 @@ load_custom_meta() {
   local path
   path="$(custom_meta_path "$id")"
   [ -f "$path" ] || return 1
+
+  unset ENGINE_ID ENGINE_MODE ENGINE_BUILDER UNIVERSE_TYPE TICKERS INDUSTRY \
+        PORTFOLIO_TYPE METRIC_FOCUS ALLOCATION_MODE ALLOCATIONS STOP_LOSS \
+        ALGORITHM_RULE CREATED_AT
+
   # shellcheck disable=SC1090
   source "$path"
 }
@@ -2804,6 +2810,50 @@ metric_focus_for_portfolio_type() {
     Efficiency) echo "Sharpe, Sortino, Calmar" ;;
     *) echo "" ;;
   esac
+}
+
+CUSTOM_SUPPORTED_TICKERS=(
+  AAPL MSFT NVDA
+  LLY UNH JNJ
+  JPM GS BLK
+  AMZN TSLA HD
+  GOOG META NFLX
+  COST WMT PG
+  XOM CVX
+)
+
+ticker_supported() {
+  local needle="$1"
+  local t
+  for t in "${CUSTOM_SUPPORTED_TICKERS[@]}"; do
+    [ "$t" = "$needle" ] && return 0
+  done
+  return 1
+}
+
+normalize_ticker_csv() {
+  printf "%s" "$1" \
+    | tr '[:lower:]' '[:upper:]' \
+    | sed 's/[^A-Z,]//g' \
+    | sed 's/,,*/,/g' \
+    | sed 's/^,*//' \
+    | sed 's/,*$//'
+}
+
+validate_ticker_csv_supported() {
+  local csv="$1"
+  local bad=()
+  local token
+
+  [ -n "$csv" ] || return 1
+
+  IFS=',' read -r -a _ticker_arr <<< "$csv"
+  for token in "${_ticker_arr[@]}"; do
+    [ -n "$token" ] || continue
+    ticker_supported "$token" || bad+=("$token")
+  done
+
+  [ "${#bad[@]}" -eq 0 ]
 }
 
 build_custom_bundle_files() {
@@ -2887,14 +2937,59 @@ draw_header_once() {
 prompt_box_input() {
   local prompt="$1"
   local value=""
+  local rows cols width inner left box_h top
+  local prompt_row input_row input_col
 
   ui_restore_tty
   ui_drain_input
-  draw_header_once
-  render_box "$prompt" 34 60 0 1 2 left
-  printf '\n' >&2
+  hard_clear
+
+  rows="$(tput lines 2>/dev/null || echo 24)"
+  cols="$(tput cols 2>/dev/null || echo 80)"
+  [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+
+  width=76
+  [ "$width" -gt $((cols - 2)) ] && width=$((cols - 2))
+  [ "$width" -lt 40 ] && width=40
+
+  inner=$((width - 4))
+  left=$(( (cols - width) / 2 ))
+  [ "$left" -lt 0 ] && left=0
+
+  # 5 content rows:
+  # blank
+  # title
+  # blank
+  # prompt
+  # blank
+  box_h=7
+  top=$(( (rows - box_h) / 2 ))
+  [ "$top" -lt 0 ] && top=0
+
+  printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+  [ "$top" -gt 0 ] && printf '%*s' 0 '' && printf '\n%.0s' $(seq 1 "$top")
+
+  printf '%*s\033[38;5;39m╭%*s╮\033[0m\n' "$left" '' $((width - 2)) '' | sed 's/ /─/3'
+  printf '%*s\033[38;5;39m│\033[0m %-*s \033[38;5;39m│\033[0m\n' "$left" '' "$inner" ""
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$(_pad_center "ALGORA1 — Control Panel" "$inner")"
+  printf '%*s\033[38;5;39m│\033[0m %-*s \033[38;5;39m│\033[0m\n' "$left" '' "$inner" ""
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$(_pad_right "$prompt" "$inner")"
+  printf '%*s\033[38;5;39m│\033[0m %-*s \033[38;5;39m│\033[0m\n' "$left" '' "$inner" ""
+  printf '%*s\033[38;5;39m╰%*s╯\033[0m\n' "$left" '' $((width - 2)) '' | sed 's/ /─/3'
+
+  prompt_row=$((top + 5))
+  input_row=$((prompt_row + 1))
+  input_col=$((left + 3))
+
+  printf '\033[%d;%dH' "$input_row" "$input_col" > /dev/tty
+  cursor_show
   IFS= read -r value < /dev/tty || true
+  cursor_hide
   ui_drain_input
+
   printf '%s\n' "$value"
 }
 
@@ -2923,9 +3018,12 @@ Allocations: ${ALLOCATIONS:-}
 Stop Loss: ${stop_loss_display}
 Created: ${CREATED_AT:-}
 Zip: ${zip_name}
+
+Press Enter to return.
 EOF
 )"
-  show_centered_info_box "$summary"
+  hard_clear
+  center_box "$summary" 0 76 1
 }
 
 custom_engine_builder_guided() {
@@ -2967,7 +3065,20 @@ custom_engine_builder_guided() {
     local ticker
     ticker="$(input "Enter ticker (example: AAPL):")"
     ticker="$(printf "%s" "$ticker" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z')"
-    [ -n "$ticker" ] || { warn "Ticker cannot be empty."; pause_return; return 0; }
+
+    if [ -z "$ticker" ]; then
+      show_notice_with_return "Ticker cannot be empty."
+      return 0
+    fi
+
+    if ! ticker_supported "$ticker"; then
+      show_notice_with_return "Unsupported ticker: $ticker
+
+Supported custom tickers:
+AAPL, MSFT, NVDA, LLY, UNH, JNJ, JPM, GS, BLK,
+AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
+      return 0
+    fi
 
     tickers="$ticker"
 
@@ -3006,7 +3117,7 @@ custom_engine_builder_guided() {
   build_custom_bundle_files "$id"
 
   show_custom_engine_summary_box "$id"
-  pause_return_box
+  ui_wait_enter_only
 }
 
 custom_engine_builder_advanced() {
@@ -3035,8 +3146,21 @@ custom_engine_builder_advanced() {
 
   local ticker_csv
   ticker_csv="$(input "Enter ticker(s), comma-separated (example: NVDA,TSLA):")"
-  ticker_csv="$(printf "%s" "$ticker_csv" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z,')"
-  [ -n "$ticker_csv" ] || { warn "Ticker list cannot be empty."; pause_return; return 0; }
+  ticker_csv="$(normalize_ticker_csv "$ticker_csv")"
+
+  if [ -z "$ticker_csv" ]; then
+    show_notice_with_return "Ticker list cannot be empty."
+    return 0
+  fi
+
+  if ! validate_ticker_csv_supported "$ticker_csv"; then
+    show_notice_with_return "One or more tickers are unsupported.
+
+Supported custom tickers:
+AAPL, MSFT, NVDA, LLY, UNH, JNJ, JPM, GS, BLK,
+AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
+    return 0
+  fi
 
   local allocation_mode allocations
   draw_header_once
@@ -3094,7 +3218,7 @@ custom_engine_builder_advanced() {
   build_custom_bundle_files "$id"
 
   show_custom_engine_summary_box "$id"
-  pause_return_box
+  ui_wait_enter_only
 }
 
 view_custom_engines_menu() {
@@ -3120,29 +3244,27 @@ view_custom_engines_menu() {
     case "$action" in
       "View Summary")
         show_custom_engine_summary_box "$picked"
-        pause_return_box
+        ui_wait_enter_only
         ;;
       "Rebuild Zip")
         build_custom_bundle_files "$picked"
-        show_centered_info_box "Zip rebuilt successfully: $(basename "$(custom_zip_path "$picked")")"
-        pause_return_box
+        show_notice_with_return "Zip rebuilt successfully: $(basename "$(custom_zip_path "$picked")")"
         ;;
       "Show Backtest Info")
         load_custom_meta "$picked" || true
-        show_centered_info_box "Custom Engine Name: ${ENGINE_ID}
+        show_notice_with_return "Custom Engine Name: ${ENGINE_ID}
 Industry: ${INDUSTRY:-Not set}
 Portfolio Type: ${PORTFOLIO_TYPE:-Not set}
 Metric Focus: ${METRIC_FOCUS:-Not set}
+
 Backtest links are not wired yet."
-        pause_return_box
         ;;
       "Delete")
         if confirm "Delete custom engine '${picked}'?"; then
           rm -f "$(custom_meta_path "$picked")"
           rm -rf "$(custom_build_dir "$picked")"
           rm -f "$(custom_zip_path "$picked")"
-          show_centered_info_box "Deleted ${picked}"
-          pause_return_box
+          show_notice_with_return "Deleted ${picked}"
           return 0
         fi
         ;;
@@ -3339,9 +3461,7 @@ live_charts_menu() {
   eng="$(detect_running_engine_best_effort || true)"
 
   if [ -z "$eng" ]; then
-    hard_clear
-    center_box 'No active engine detected.'
-    ui_wait_enter_only
+    show_notice_with_return "No active engine detected."
     hard_clear
     return 0
   fi
@@ -3414,9 +3534,7 @@ troubleshoot_menu() {
 
   # If none running: show centered screen and return on Enter (no typing, no cursor)
   if [ -z "$eng" ]; then
-    hard_clear
-    center_box 'No active engine detected.'
-    ui_wait_enter_only
+    show_notice_with_return "No active engine detected."
     hard_clear
     return 0
   fi
