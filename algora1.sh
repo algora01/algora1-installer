@@ -3558,14 +3558,49 @@ view_custom_engines_menu() {
           >/tmp/algora1_backtest.log 2>&1 &
         local bt_pid=$!
 
-        sleep 3
+        # Wait up to 8s in 0.5s increments for streamlit to be ready
+        local _waited=0
+        while [ "$_waited" -lt 16 ]; do
+          sleep 0.5
+          _waited=$((_waited + 1))
+          # Check process still alive
+          kill -0 "$bt_pid" 2>/dev/null || break
+          # Check if streamlit is listening on 8502
+          if command -v ss >/dev/null 2>&1; then
+            ss -tln 2>/dev/null | grep -q ':8502 ' && break
+          elif command -v netstat >/dev/null 2>&1; then
+            netstat -tln 2>/dev/null | grep -q ':8502 ' && break
+          else
+            [ "$_waited" -ge 2 ] && break  # fallback: just wait 1s
+          fi
+        done
 
         if ! kill -0 "$bt_pid" 2>/dev/null; then
           show_notice_with_return "$(printf "Backtest server failed to start.\n\nCheck /tmp/algora1_backtest.log for details.")"
           return 0
         fi
 
-        show_notice_with_return "$(printf "Backtest running for %s\n\nOpen in your browser:\nhttp://localhost:8502\n\nPress Enter to stop the server." "${ENGINE_ID}")"
+        # Try to auto-open the browser on the client machine.
+        # The SSH tunnel forwards VM:8502 → localhost:8502 on the client.
+        # We send an OSC 8 hyperlink escape so the URL is also clickable in-terminal.
+        local _url="http://localhost:8502"
+
+        # Attempt to open browser on the local client OS (fires silently on failure)
+        {
+          # macOS: open via osascript sent through the terminal escape channel
+          # Linux desktop: xdg-open (only works if DISPLAY is set on client)
+          # Both: python3 webbrowser as universal fallback
+          python3 -c "import webbrowser; webbrowser.open('${_url}')" >/dev/null 2>&1 || \
+          xdg-open "${_url}" >/dev/null 2>&1 || true
+        } &
+
+        # OSC 8 makes the URL clickable in Terminal.app, iTerm2, and most modern terminals
+        local _osc8_link
+        _osc8_link="$(printf '\033]8;;%s\033\\%s\033]8;;\033\\' "${_url}" "${_url}")"
+
+        hard_clear
+        center_box "$(printf "Backtest running for %s\n\n%s\n\nPress Enter to return and stop the server." "${ENGINE_ID}" "${_osc8_link}")" 0 76 1
+        ui_wait_enter_only
 
         kill "$bt_pid" 2>/dev/null || true
         pkill -f "streamlit.*8502" >/dev/null 2>&1 || true
@@ -4195,7 +4230,7 @@ c1.metric("Engine", ENGINE_ID)
 c2.metric("Mode", ENGINE_MODE)
 c3.metric("SMAs", f"{SMA_FAST} / {SMA_MID} / {SMA_SLOW}")
 c4.metric("Stop Loss", f"{abs(STOP_LOSS_PCT):.1f}%")
-st.markdown(f"**Allocation:** {ALLOC_DISPLAY} &nbsp; | &nbsp; **Rule:** `{ALGORITHM_RULE}`")
+st.markdown(f"**Allocation:** {ALLOC_DISPLAY}")
 st.markdown("---")
 
 if not TICKERS:
