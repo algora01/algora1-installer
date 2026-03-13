@@ -2777,14 +2777,12 @@ validate_engine_id() {
 }
 
 sanitize_engine_id() {
-  local raw cleaned trimmed
-  raw="$(printf "%s" "$1")"
-  # Keep only ASCII printable + whitespace, then trim.
-  cleaned="$(printf "%s" "$raw" | LC_ALL=C tr -cd '\11\12\15\40-\176')"
-  cleaned="$(printf "%s" "$cleaned" | tr -d '\r')"
-  trimmed="$(printf "%s" "$cleaned" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  [[ "$trimmed" =~ ^[A-Za-z]{4}$ ]] || return 1
-  printf "%s" "$trimmed" | tr '[:lower:]' '[:upper:]'
+  local raw letters
+  raw="$(printf "%s" "$1" | tr -d '\r')"
+  # Keep only letters; ignore any stray control/escape noise.
+  letters="$(printf "%s" "$raw" | tr -cd 'A-Za-z')"
+  [ "${#letters}" -eq 4 ] || return 1
+  printf "%s" "$letters" | tr '[:lower:]' '[:upper:]'
 }
 
 custom_engine_exists() {
