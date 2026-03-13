@@ -366,23 +366,35 @@ install_local_cli() {
   if [ "${0##*/}" = "bash" ] || [ "${0##*/}" = "sh" ] || [ ! -f "${0}" ]; then
     : "${ALGORA1_INSTALL_URL:=https://raw.githubusercontent.com/algora01/algora1-installer/main/algora1.sh}"
     need_cmd curl || ui_die "curl is required to install the local command."
-    curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" 2>/dev/null || ui_die "Failed to download installer."
+
+    ui_info "Installing local command by downloading from ${ALGORA1_INSTALL_URL}"
+    curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" || ui_die "Failed to download installer."
     chmod +x "${target}"
+    ui_ok "Installed local command: ${target}"
   else
     local self
     self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
     if [ "$self" != "$target" ]; then
-      cp -f "$self" "$target" 2>/dev/null || true
+      cp -f "$self" "$target"
       chmod +x "$target"
+      ui_ok "Installed local command: $target"
+    else
+      ui_ok "Local command already installed: $target"
     fi
   fi
+
+  ui_info "Add this to your shell profile if needed:"
+  ui_info "  export PATH=\"$target_dir:\$PATH\""
 
   if [ "$(detect_os)" = "macos" ]; then
     local zshrc="${HOME}/.zshrc"
     local line='export PATH="$HOME/.local/bin:$PATH"'
     touch "$zshrc"
-    if ! grep -Fqx "$line" "$zshrc" 2>/dev/null; then
-      printf "\n# algora1\n%s\n" "$line" >> "$zshrc" 2>/dev/null || true
+    if ! grep -Fqx "$line" "$zshrc"; then
+      printf "\n# algora1\n%s\n" "$line" >> "$zshrc"
+      ui_ok "Added ~/.local/bin to PATH in ~/.zshrc"
+      ui_info "Restart Terminal or run: source ~/.zshrc"
     fi
     export PATH="$HOME/.local/bin:$PATH"
   fi
@@ -537,12 +549,14 @@ ensure_macos_app_bundle_present() {
 
 install_macos_app_bundle() {
 
-  local icns_path="${1:-}" 
+  local icns_path="${1:-}"
   local app_root="${HOME}/Applications/ALGORA1.app"
   local contents="${app_root}/Contents"
   local macos_dir="${contents}/MacOS"
   local res_dir="${contents}/Resources"
 
+  # Always wipe and recreate so the bundle timestamp updates on every install
+  rm -rf "${app_root}" 2>/dev/null || true
   mkdir -p "${macos_dir}" "${res_dir}"
 
   cat > "${macos_dir}/algora1" <<'EOF'
@@ -552,11 +566,15 @@ set -euo pipefail
 # Ensure user's local bin is available
 export PATH="${HOME}/.local/bin:${PATH}"
 
-# Open Terminal and run algora1
+# Open Terminal and run algora1 — reuse the front window if Terminal is already open
 osascript >/dev/null <<OSA
 tell application "Terminal"
   activate
-  do script "algora1"
+  if (count of windows) > 0 then
+    do script "algora1" in front window
+  else
+    do script "algora1"
+  end if
 end tell
 OSA
 EOF
@@ -599,11 +617,10 @@ EOF
 
 if [ "${1:-}" = "--install-local" ]; then
   _install_clean() {
-    # Use tput for colors so escape sequences go to tty, not bash's stdin pipe
     local C_BOX="" C_OK="" C_RESET=""
     if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
-      C_BOX="$(tput setaf 6 2>/dev/null || true)"    # cyan
-      C_OK="$(tput setaf 2 2>/dev/null || true)"     # green
+      C_BOX="$(tput setaf 6 2>/dev/null || true)"
+      C_OK="$(tput setaf 2 2>/dev/null || true)"
       C_RESET="$(tput sgr0 2>/dev/null || true)"
     fi
 
@@ -619,7 +636,6 @@ if [ "${1:-}" = "--install-local" ]; then
     local left=$(( (cols - width) / 2 ))
     [ "$left" -lt 0 ] && left=0
 
-    # Build hline without printf -v (POSIX compatible)
     local hline i
     hline=""
     i=0
@@ -634,7 +650,6 @@ if [ "${1:-}" = "--install-local" ]; then
       i=0; while [ "$i" -lt "$top_pad" ]; do printf '\n' > /dev/tty; i=$((i+1)); done
       printf '%*s%s╭%s╮%s\n' "$left" '' "$C_BOX" "$hline" "$C_RESET" > /dev/tty
       printf '%*s%s│%s%*s%s%s│%s\n' "$left" '' "$C_BOX" "$C_RESET" "$inner" '' '' "$C_BOX" "$C_RESET" > /dev/tty
-
       local txt plain len lp rp
       for txt in "$line1" "$line2" "$line3"; do
         [ -n "$txt" ] || txt=""
@@ -644,7 +659,6 @@ if [ "${1:-}" = "--install-local" ]; then
         printf '%*s%s│%s%*s%s%*s%s│%s\n' \
           "$left" '' "$C_BOX" "$C_RESET" "$lp" '' "$txt" "$rp" '' "$C_BOX" "$C_RESET" > /dev/tty
       done
-
       printf '%*s%s│%s%*s%s%s│%s\n' "$left" '' "$C_BOX" "$C_RESET" "$inner" '' '' "$C_BOX" "$C_RESET" > /dev/tty
       printf '%*s%s╰%s╯%s\n' "$left" '' "$C_BOX" "$hline" "$C_RESET" > /dev/tty
     }
@@ -652,16 +666,16 @@ if [ "${1:-}" = "--install-local" ]; then
     printf '\033[?25l' > /dev/tty 2>/dev/null || true
 
     _draw_box "ALGORA1" "Installing..."
-    install_local_cli 2>/dev/null
+    install_local_cli >/dev/null 2>&1 || true
 
     if [ "$(detect_os)" = "linux" ]; then
       _draw_box "ALGORA1" "Installing..." "Setting up shortcut..."
       install_linux_desktop_shortcut \
         "https://static.wixstatic.com/media/ce61ee_00cd47ee0f9c48f69f0f7546f4298188~mv2.png" \
-        2>/dev/null || true
+        >/dev/null 2>&1 || true
     elif [ "$(detect_os)" = "macos" ]; then
       _draw_box "ALGORA1" "Installing..." "Setting up app bundle..."
-      install_macos_app_bundle "${ALGORA1_ICNS_PATH:-}" 2>/dev/null || true
+      install_macos_app_bundle "${ALGORA1_ICNS_PATH:-}" >/dev/null 2>&1 || true
     fi
 
     # Success screen
@@ -1414,7 +1428,7 @@ printf "\033[1mControl Panel\033[0m\n"
 printf "Run: \033[38;5;39malgora1\033[0m\n\n"
 
 printf "\033[1mMain Menu\033[0m\n"
-printf "  • Standard Engines\n"
+printf "  • Running session\n"
 printf "  • Live Status\n"
 printf "  • Live Charts\n"
 printf "  • Exit\n\n"
@@ -2407,7 +2421,7 @@ allocation_error_reason() {
 
   # Check for special characters beyond digits and commas
   if [[ "$csv" =~ [^0-9,] ]]; then
-    printf "Special characters are not allowed.\nUse digits and commas only."; return
+    printf "Special characters are not allowed. Use digits and commas only (e.g. 50,50)."; return
   fi
 
   IFS=',' read -r -a _err_arr <<< "$csv"
@@ -2451,40 +2465,15 @@ prompt_allocation_csv() {
   IFS=',' read -r -a _tickers <<< "$ticker_csv"
   expected="${#_tickers[@]}"
 
+  local rules_msg
+  rules_msg="$(printf \
+    "Tickers: %s\n\nEnter one whole-number percentage per ticker, comma-separated.\nRules:\n  • No decimals or fractions  (e.g. 50.5 is invalid)\n  • No special characters     (digits and commas only)\n  • Each value must be 1–100\n  • No zeros                  (every ticker needs at least 1%%)\n  • Total must be ≤ 100%%     (e.g. 60,30 is valid; 60,50 exceeds 100%%)\n  • Exactly %d value(s) required, one per ticker" \
+    "$ticker_csv" "$expected")"
+
   while true; do
-    hard_clear
-
-    # Small top padding so ticker box sits near the top without being flush
-    local rows
-    rows="$(tput lines 2>/dev/null || echo 24)"
-    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
-    local top_pad=$(( rows / 6 ))
-    [ "$top_pad" -lt 1 ] && top_pad=1
-    [ "$top_pad" -gt 4 ] && top_pad=4
-    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
-
-    # Box contains only the tickers line
-    center_box "Tickers: $ticker_csv" 0 76 0
-    echo ""
-
-    # Center the rules block based on the longest line in the block
-    local cols
-    cols="$(tput cols 2>/dev/null || echo 80)"
-    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
-    # Longest line: "Enter one whole-number percentage per ticker, comma-separated." = 62 chars
-    # Use that as the block width; center it on terminal
-    local block_w=62
-    local bi=$(( (cols - block_w) / 2 ))
-    [ "$bi" -lt 0 ] && bi=0
-
-    printf '%*sEnter one whole-number percentage per ticker, comma-separated.\n' "$bi" ""
-    echo ""
-    printf '%*s• No decimals or fractions (e.g. 50.5 is invalid)\n' "$bi" ""
-    printf '%*s• No special characters (digits and commas only)\n' "$bi" ""
-    printf '%*s• Each value must be 1–100\n' "$bi" ""
-    printf '%*s• No zeros (every ticker needs at least 1%%)\n' "$bi" ""
-    printf '%*s• Total must be ≤ 100%% (e.g. 60,30 is valid; 60,50 exceeds 100%%)\n' "$bi" ""
-    printf '%*s• Exactly %d value(s) required, one per ticker\n' "$bi" "" "$expected"
+    draw_header_once
+    # Show the allocation rules box before the input prompt
+    center_box "$rules_msg" 0 76 0
     echo ""
 
     allocations="$(input "Percentages (example: 50,50):")"
@@ -2500,12 +2489,9 @@ prompt_allocation_csv() {
   done
 }
 
-_PROMPT_STOP_LOSS_RESULT=""
-
 prompt_stop_loss() {
   local prompt="${1:-Stop loss percent}"
   local default="${2:-6}"
-  _PROMPT_STOP_LOSS_RESULT=""
   local sl=""
   local err=""
 
@@ -2516,7 +2502,7 @@ prompt_stop_loss() {
     sl="${sl:-$default}"
 
     if validate_stop_loss "$sl"; then
-      _PROMPT_STOP_LOSS_RESULT="$sl"
+      printf '%s\n' "$sl"
       return 0
     fi
 
@@ -3332,8 +3318,7 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
 
     tickers="$ticker"
 
-    prompt_stop_loss "Stop loss percent" "6"
-    stop_loss="$_PROMPT_STOP_LOSS_RESULT"
+    stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
   else
     draw_header_once
     industry="$(choose "Select industry" "${CUSTOM_INDUSTRIES[@]}" "Back")"
@@ -3371,35 +3356,6 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
   ui_wait_enter_only
 }
 
-validate_sma_length() {
-  local v="$1"
-  [[ "$v" =~ ^[0-9]+$ ]] || return 1
-  [ "$v" -ge 2 ] && [ "$v" -le 500 ]
-}
-
-_PROMPT_SMA_RESULT=""
-
-prompt_sma_length() {
-  local label="$1"
-  local min_val="${2:-2}"
-  local max_val="${3:-500}"
-  _PROMPT_SMA_RESULT=""
-  local val="" err=""
-
-  while true; do
-    draw_header_once
-    [ -n "$err" ] && printf '\033[38;5;196m%s\033[0m\n\n' "$err" >&2
-    val="$(input "${label} (${min_val}–${max_val}):")"
-
-    if [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge "$min_val" ] && [ "$val" -le "$max_val" ]; then
-      _PROMPT_SMA_RESULT="$val"
-      return 0
-    fi
-
-    err="Enter a whole number from ${min_val} to ${max_val}."
-  done
-}
-
 custom_engine_builder_advanced() {
   ensure_custom_dirs
   hard_clear
@@ -3429,16 +3385,6 @@ custom_engine_builder_advanced() {
 
   if [ -z "$ticker_csv" ]; then
     show_notice_with_return "Ticker list cannot be empty."
-    return 0
-  fi
-
-  # Duplicate ticker check
-  local -a _dup_arr
-  IFS=',' read -r -a _dup_arr <<< "$ticker_csv"
-  local _uniq_count
-  _uniq_count="$(printf "%s\n" "${_dup_arr[@]}" | sort -u | wc -l | tr -d ' ')"
-  if [ "${#_dup_arr[@]}" -ne "$_uniq_count" ]; then
-    show_notice_with_return "Duplicate tickers are not allowed.\n\nPlease enter each ticker only once."
     return 0
   fi
 
@@ -3480,19 +3426,15 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
       ;;
     "Custom SMA Lengths")
       local sma_fast sma_mid sma_slow
-      prompt_sma_length "Fast SMA length" 2 200
-      sma_fast="$_PROMPT_SMA_RESULT"
-      prompt_sma_length "Mid SMA length" $((sma_fast + 1)) 300
-      sma_mid="$_PROMPT_SMA_RESULT"
-      prompt_sma_length "Slow SMA length" $((sma_mid + 1)) 500
-      sma_slow="$_PROMPT_SMA_RESULT"
+      sma_fast="$(input "Fast SMA length:")"
+      sma_mid="$(input "Mid SMA length:")"
+      sma_slow="$(input "Slow SMA length:")"
       algorithm_rule="BUY if price > SMA${sma_slow} and SMA${sma_fast} > SMA${sma_mid} and NOT(price < SMA${sma_mid}), else SELL"
       ;;
   esac
 
   local stop_loss
-  prompt_stop_loss "Stop loss percent" "6"
-  stop_loss="$_PROMPT_STOP_LOSS_RESULT"
+  stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
 
   save_custom_meta "$id" \
     ENGINE_ID "$id" \
@@ -3545,52 +3487,12 @@ view_custom_engines_menu() {
         ;;
       "Show Backtest Info")
         load_custom_meta "$picked" || true
+        show_notice_with_return "Custom Engine Name: ${ENGINE_ID}
+Industry: ${INDUSTRY:-Not set}
+Portfolio Type: ${PORTFOLIO_TYPE:-Not set}
+Metric Focus: ${METRIC_FOCUS:-Not set}
 
-        # Kill any existing backtest server
-        pkill -f "streamlit.*8502" >/dev/null 2>&1 || true
-        pkill -f "custom_backtest" >/dev/null 2>&1 || true
-        sleep 0.3
-
-        # Export config for the Python app
-        export ALGORA1_ENGINE_ID="${ENGINE_ID}"
-        export ALGORA1_TICKERS="${TICKERS:-}"
-        export ALGORA1_ALGORITHM_RULE="${ALGORITHM_RULE:-}"
-        export ALGORA1_STOP_LOSS="${STOP_LOSS:-6}"
-        export ALGORA1_ALLOCATIONS="${ALLOCATIONS:-AUTO_EQUAL}"
-        export ALGORA1_ENGINE_MODE="${ENGINE_MODE:-Live}"
-
-        local bt_script="${HOME}/.algora1_custom/custom_backtest.py"
-        if [ ! -f "$bt_script" ]; then
-          show_notice_with_return "Backtest script not found.\nPlease re-run the installer to update the control panel."
-          return 0
-        fi
-
-        # Check streamlit is available
-        if ! command -v streamlit >/dev/null 2>&1; then
-          show_notice_with_return "Streamlit not installed.\nRun: pip3 install streamlit --break-system-packages\n\nThen try again."
-          return 0
-        fi
-
-        nohup streamlit run "$bt_script" \
-          --server.port 8502 \
-          --server.headless true \
-          --server.address 127.0.0.1 \
-          >/tmp/algora1_backtest.log 2>&1 &
-        local bt_pid=$!
-
-        sleep 3
-
-        # Check it actually started
-        if ! kill -0 "$bt_pid" 2>/dev/null; then
-          show_notice_with_return "$(printf "Backtest server failed to start.\n\nCheck /tmp/algora1_backtest.log for details.")"
-          return 0
-        fi
-
-        show_notice_with_return "$(printf "Backtest running for %s\n\nOpen in your browser:\nhttp://localhost:8502\n\nPress Enter to stop the server." "${ENGINE_ID}")"
-
-        kill "$bt_pid" 2>/dev/null || true
-        pkill -f "streamlit.*8502" >/dev/null 2>&1 || true
-        pkill -f "custom_backtest" >/dev/null 2>&1 || true
+Backtest links are not wired yet."
         ;;
       "Delete")
         if confirm "Delete custom engine '${picked}'?"; then
@@ -3654,7 +3556,7 @@ running_sessions_menu() {
 
   if [ "$cnt" = "0" ]; then
     local action
-    action="$(choose "Standard Engines" "Start new session" "Back")"
+    action="$(choose "Running session" "Start new session" "Back")"
     [ "$action" = "Start new session" ] || return 0
 
     # Enforce no session exists
@@ -3688,11 +3590,11 @@ running_sessions_menu() {
     hard_clear
     if has_gum; then
       gum style --border rounded --padding "1 2" --border-foreground 39 \
-        "$(printf "Standard Engines\nSession: %s" "$s_name")"
+        "$(printf "Running Session\nSession: %s" "$s_name")"
       echo ""
     fi
 
-    action="$(choose "Standard Engines" "Connect" "Delete session" "Back")"
+    action="$(choose "Running session" "Connect" "Delete session" "Back")"
 
     case "$action" in
       "Connect")
@@ -3915,7 +3817,7 @@ main_loop() {
 
     local selection
     selection="$(choose "Select an option" \
-      "Standard Engines" \
+      "Running session" \
       "Custom Engines" \
       "Live Status" \
       "Live Charts" \
@@ -3923,7 +3825,7 @@ main_loop() {
       "Exit")"
 
     case "$selection" in
-      "Standard Engines") running_sessions_menu ;;
+      "Running session") running_sessions_menu ;;
       "Custom Engines") custom_engines_menu ;;
       "Live Status") live_status_menu ;;
       "Live Charts") live_charts_menu ;;
@@ -3945,496 +3847,6 @@ if command -v apt-get >/dev/null 2>&1; then
   command -v zip >/dev/null 2>&1 || sudo apt-get install -y zip >/dev/null 2>&1 || true
 fi
 
-# Install backtest Python dependencies (non-blocking)
-pip3 install streamlit plotly yfinance pandas numpy pytz \
-  --quiet --break-system-packages >/dev/null 2>&1 || true
-
-# Write the custom engine backtest Streamlit app
-mkdir -p "${HOME}/.algora1_custom"
-cat > "${HOME}/.algora1_custom/custom_backtest.py" <<'BACKTEST_PY'
-# ALGORA1 Custom Engine Backtest — auto-generated by installer
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import yfinance as yf
-from datetime import datetime
-import numpy as np
-import re
-import os
-import pytz
-
-# ── Config from env vars set by algora1 menu ──────────────────────────────────
-ENGINE_ID       = os.environ.get("ALGORA1_ENGINE_ID",       "Custom Engine")
-TICKERS_STR     = os.environ.get("ALGORA1_TICKERS",         "")
-ALGORITHM_RULE  = os.environ.get("ALGORA1_ALGORITHM_RULE",
-                      "BUY if price > SMA50 and SMA10 > SMA20 and NOT(price < SMA20), else SELL")
-STOP_LOSS_RAW   = os.environ.get("ALGORA1_STOP_LOSS",       "6")
-ALLOCATIONS_STR = os.environ.get("ALGORA1_ALLOCATIONS",     "AUTO_EQUAL")
-ENGINE_MODE     = os.environ.get("ALGORA1_ENGINE_MODE",     "Live")
-
-TICKERS      = [t.strip().upper() for t in TICKERS_STR.split(",") if t.strip()]
-STOP_LOSS_PCT = -abs(float(STOP_LOSS_RAW))   # negative → below entry
-
-def parse_sma_lengths(rule):
-    nums = re.findall(r'SMA(\d+)', rule)
-    if len(nums) >= 3:
-        return int(nums[1]), int(nums[2]), int(nums[0])  # fast, mid, slow
-    return 10, 20, 50
-
-SMA_FAST, SMA_MID, SMA_SLOW = parse_sma_lengths(ALGORITHM_RULE)
-
-def parse_allocations(s, n):
-    s = (s or "").strip().upper()
-    if not s or s == "AUTO_EQUAL":
-        return [1.0 / n] * n if n > 0 else []
-    try:
-        vals = [float(v.strip()) for v in s.split(",") if v.strip()]
-        total = sum(vals) or 1.0
-        return [v / total for v in vals]
-    except Exception:
-        return [1.0 / n] * n if n > 0 else []
-
-WEIGHTS = parse_allocations(ALLOCATIONS_STR, len(TICKERS)) if TICKERS else []
-ALLOC_DISPLAY = ", ".join(f"{t} {w*100:.0f}%" for t, w in zip(TICKERS, WEIGHTS)) if TICKERS else "—"
-EXCLUDE_YEAR = 2016
-
-# ── Page config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title=f"ALGORA1 — {ENGINE_ID} Backtest",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-DEFAULT_PLOTLY_TEMPLATE = "plotly_white"
-PLOT_TITLE_FONT = dict(family="Arial, sans-serif", size=24, color="#111827")
-
-st.markdown("""
-<style>
-.stApp,[data-testid="stAppViewContainer"],
-[data-testid="stAppViewContainer"] > .main,
-[data-testid="stHeader"],[data-testid="stSidebar"] {
-    background-color:#ffffff; color:#111827;
-}
-</style>""", unsafe_allow_html=True)
-
-# ── Data helpers ──────────────────────────────────────────────────────────────
-ET = pytz.timezone("America/New_York")
-
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_data(ticker):
-    try:
-        df = yf.Ticker(ticker).history(period="10y", interval="1d")
-        if df.empty:
-            return None
-        now_et = datetime.now(ET)
-        if df.index[-1].date() == now_et.date() and now_et.hour < 16:
-            df = df.iloc[:-1]
-        df = df.reset_index()
-        df["date"] = pd.to_datetime(df["Date"])
-        df = df.set_index("date")
-        return df[["Open","High","Low","Close"]].rename(
-            columns={"Open":"open","High":"high","Low":"low","Close":"close"})
-    except Exception as e:
-        st.error(f"Error fetching {ticker}: {e}")
-        return None
-
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_latest_price(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        name  = t.info.get("longName", ticker)
-        price = float(t.history(period="1d")["Close"].iloc[-1])
-        return name, price
-    except Exception:
-        return ticker, 0.0
-
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_spx(start, end):
-    try:
-        sp = yf.Ticker("^GSPC").history(
-            start=pd.to_datetime(start),
-            end=pd.to_datetime(end) + pd.Timedelta(days=2),
-            interval="1d")
-        return sp if not sp.empty else None
-    except Exception:
-        return None
-
-# ── Strategy engine ───────────────────────────────────────────────────────────
-def run_strategy(ticker, sma_fast, sma_mid, sma_slow, stop_loss_pct):
-    df = fetch_data(ticker)
-    if df is None or df.empty:
-        return None, None, None, None
-    stock_name, live_price = fetch_latest_price(ticker)
-
-    df[f"sma{sma_fast}"] = df["close"].rolling(sma_fast).mean()
-    df[f"sma{sma_mid}"]  = df["close"].rolling(sma_mid).mean()
-    df[f"sma{sma_slow}"] = df["close"].rolling(sma_slow).mean()
-    df = df.dropna(subset=[f"sma{sma_slow}"])
-    if df.empty:
-        return None, None, None, None
-
-    df["is_green"] = (
-        (df[f"sma{sma_fast}"] > df[f"sma{sma_mid}"]) &
-        (df["close"] > df[f"sma{sma_mid}"]) &
-        (df["close"] > df[f"sma{sma_slow}"]) &
-        (df["low"]   >= df[f"sma{sma_mid}"]) &
-        (df["low"]   >= df[f"sma{sma_slow}"])
-    )
-
-    closed_trades = []
-    holding = False
-    buy_price = buy_date = stop_price = None
-
-    for i in range(1, len(df)):
-        curr_date = df.index[i]
-        curr  = bool(df["is_green"].iloc[i])
-        prev  = bool(df["is_green"].iloc[i - 1])
-        close_p = float(df["close"].iloc[i])
-        low_p   = float(df["low"].iloc[i])
-
-        if not holding and curr and not prev:
-            holding = True
-            buy_price  = close_p
-            buy_date   = curr_date
-            stop_price = buy_price * (1 + stop_loss_pct / 100.0)
-        elif holding:
-            if low_p <= stop_price:
-                ret = (stop_price - buy_price) / buy_price * 100
-                closed_trades.append({"buy_date": buy_date, "sell_date": curr_date,
-                    "buy_price": buy_price, "sell_price": stop_price, "return": ret,
-                    "exit_type": "STOP_LOSS",
-                    "buy_date_str":  buy_date.tz_localize(None).strftime("%Y-%m-%d"),
-                    "sell_date_str": curr_date.tz_localize(None).strftime("%Y-%m-%d")})
-                holding = False; buy_price = buy_date = stop_price = None
-            elif not curr and prev:
-                ret = (close_p - buy_price) / buy_price * 100
-                closed_trades.append({"buy_date": buy_date, "sell_date": curr_date,
-                    "buy_price": buy_price, "sell_price": close_p, "return": ret,
-                    "exit_type": "SIGNAL",
-                    "buy_date_str":  buy_date.tz_localize(None).strftime("%Y-%m-%d"),
-                    "sell_date_str": curr_date.tz_localize(None).strftime("%Y-%m-%d")})
-                holding = False; buy_price = buy_date = stop_price = None
-
-    open_trade = None
-    if holding and buy_price is not None:
-        open_trade = {
-            "buy_date_str": buy_date.tz_localize(None).strftime("%Y-%m-%d"),
-            "buy_price": buy_price, "latest_price": live_price,
-            "unrealized_return": (live_price - buy_price) / buy_price * 100,
-            "current_stop_price": stop_price,
-        }
-
-    # Candlestick + per-trade return chart
-    green  = df[df["is_green"]]
-    out_of = df[~df["is_green"]]
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.7, 0.3], shared_xaxes=True,
-        subplot_titles=(f"{stock_name} ({ticker}) — ${live_price:.2f}", "Per-Trade Return (%)"))
-    fig.add_trace(go.Candlestick(x=green.index, open=green["open"], high=green["high"],
-        low=green["low"], close=green["close"],
-        increasing_line_color="#00ff7a", decreasing_line_color="#00ff7a",
-        name="In Strategy", showlegend=False), row=1, col=1)
-    fig.add_trace(go.Candlestick(x=out_of.index, open=out_of["open"], high=out_of["high"],
-        low=out_of["low"], close=out_of["close"],
-        increasing_line_color="#c0c0c0", decreasing_line_color="#c0c0c0",
-        name="Out", showlegend=False), row=1, col=1)
-    for t in closed_trades:
-        seg = df.loc[t["buy_date"]:t["sell_date"]]
-        if seg.empty:
-            continue
-        daily_ret = (seg["close"] - t["buy_price"]) / t["buy_price"] * 100
-        if t["exit_type"] == "STOP_LOSS":
-            daily_ret.iloc[-1] = (t["sell_price"] - t["buy_price"]) / t["buy_price"] * 100
-        color = "#00ff00" if t["return"] > 0 else "#ff0000"
-        fig.add_trace(go.Scatter(x=seg.index, y=daily_ret, mode="lines",
-            line=dict(color=color, width=2), showlegend=False), row=2, col=1)
-    fig.update_layout(template=DEFAULT_PLOTLY_TEMPLATE, height=800,
-        font=dict(color="#111827"), xaxis_rangeslider_visible=False,
-        xaxis=dict(rangebreaks=[dict(bounds=["sat","mon"])]),
-        xaxis2=dict(rangebreaks=[dict(bounds=["sat","mon"])]),
-        yaxis_title="Price ($)", yaxis2_title="Trade Return (%)")
-    return fig, closed_trades, open_trade, df
-
-# ── NAV + metrics ─────────────────────────────────────────────────────────────
-def build_daily_nav(df, stop_loss_pct):
-    equity = 10000.0
-    holding = False; shares = 0.0; buy_price = stop_price = None
-    equity_series = []; in_mkt = []
-    for i in range(1, len(df)):
-        curr  = bool(df["is_green"].iloc[i])
-        prev  = bool(df["is_green"].iloc[i - 1])
-        close_p = float(df["close"].iloc[i])
-        low_p   = float(df["low"].iloc[i])
-        if not holding:
-            if curr and not prev:
-                holding = True; buy_price = close_p
-                stop_price = buy_price * (1 + stop_loss_pct / 100.0)
-                shares = equity / buy_price
-            equity_series.append(equity); in_mkt.append(False); continue
-        if low_p <= stop_price:
-            equity = shares * stop_price
-            holding = False; shares = 0.0; buy_price = stop_price = None
-            equity_series.append(equity); in_mkt.append(True); continue
-        if not curr and prev:
-            equity = shares * close_p
-            holding = False; shares = 0.0; buy_price = stop_price = None
-            equity_series.append(equity); in_mkt.append(True); continue
-        equity_series.append(shares * close_p); in_mkt.append(True)
-    nav = pd.DataFrame({"equity": equity_series, "in_market": in_mkt}, index=df.index[1:])
-    nav["daily_ret"] = nav["equity"].pct_change().fillna(0.0)
-    return nav
-
-def compute_metrics(nav):
-    if nav is None or nav.empty:
-        return pd.DataFrame(columns=["Metric","Value"]), pd.DataFrame(columns=["Year","NAV Return (%)"])
-    r = nav["daily_ret"].astype(float); eq = nav["equity"].astype(float)
-    days  = (nav.index[-1] - nav.index[0]).days
-    years = max(days / 365.25, 1e-9)
-    cagr  = (eq.iloc[-1] / eq.iloc[0]) ** (1 / years) - 1
-    vol   = r.std(ddof=0) * np.sqrt(252)
-    mean  = r.mean() * 252
-    sharpe  = mean / vol if vol > 0 else np.nan
-    dn_vol  = r[r < 0].std(ddof=0) * np.sqrt(252)
-    sortino = mean / dn_vol if dn_vol > 0 else np.nan
-    peak   = eq.cummax()
-    max_dd = ((eq / peak) - 1.0).min()
-    calmar = (cagr / abs(max_dd)) if max_dd < 0 else np.nan
-    time_in = float(nav["in_market"].mean())
-    rows = [
-        ("CAGR",                  f"{cagr*100:.2f}%"),
-        ("Total Return",          f"{((eq.iloc[-1]/eq.iloc[0])-1)*100:.2f}%"),
-        ("Max Drawdown",          f"{max_dd*100:.2f}%"),
-        ("Calmar (CAGR/|MaxDD|)", f"{calmar:.2f}" if pd.notna(calmar) else "n/a"),
-        ("Annualized Volatility", f"{vol*100:.2f}%" if pd.notna(vol) else "n/a"),
-        ("Sharpe (rf=0)",         f"{sharpe:.2f}" if pd.notna(sharpe) else "n/a"),
-        ("Sortino (rf=0)",        f"{sortino:.2f}" if pd.notna(sortino) else "n/a"),
-        ("Time in Market",        f"{time_in*100:.2f}%"),
-        ("Best Day",              f"{r.max()*100:.2f}%"),
-        ("Worst Day",             f"{r.min()*100:.2f}%"),
-    ]
-    ann = nav.copy(); ann["Year"] = ann.index.year
-    ann = ann.groupby("Year")["equity"].agg(["first","last"]).reset_index()
-    ann["NAV Return (%)"] = ((ann["last"]/ann["first"]) - 1.0).mul(100).round(2)
-    return pd.DataFrame(rows, columns=["Metric","Value"]), ann[["Year","NAV Return (%)"]]
-
-def annual_trade_exit(closed_trades):
-    if not closed_trades:
-        return pd.DataFrame(columns=["Year","Compounded Return (%)","Trades"])
-    df = pd.DataFrame(closed_trades)
-    df["Year"] = pd.to_datetime(df["sell_date"]).dt.tz_localize(None).dt.year
-    df["mult"] = 1 + df["return"] / 100.0
-    out = df.groupby("Year").agg(
-        **{"Compounded Return (%)": ("mult", lambda x: round((x.prod()-1)*100,2)),
-           "Trades": ("mult","count")}
-    ).reset_index()
-    return out
-
-def spx_overlay(fig, start, end, exclude_year=2016):
-    """Add S&P 500 buy-and-hold trace to an existing figure."""
-    sp = fetch_spx(start, end)
-    if sp is None or len(sp) < 2:
-        return fig
-    sp_ret = (sp["Close"] / sp["Close"].iloc[0] - 1.0) * 100.0
-    sp_df = pd.DataFrame({
-        "date": pd.to_datetime(sp_ret.index).tz_localize(None),
-        "ret":  sp_ret.values,
-    }).sort_values("date")
-    sp_df = sp_df[sp_df["date"].dt.year != exclude_year]
-    if sp_df.empty:
-        return fig
-    sp_df["ret"] -= float(sp_df["ret"].iloc[0])
-    fig.add_trace(go.Scatter(x=sp_df["date"], y=sp_df["ret"], mode="lines",
-        name="S&P 500 Buy & Hold", line=dict(color="#ffaa00", width=3, dash="dash")))
-    return fig
-
-def spx_annual(start, end, exclude_year=2016):
-    sp = fetch_spx(start, end)
-    if sp is None or sp.empty:
-        return pd.DataFrame(columns=["Year","SPX Buy & Hold (%)"])
-    tmp = sp.copy(); tmp["Year"] = tmp.index.year
-    y = tmp.groupby("Year")["Close"].agg(["first","last"]).reset_index()
-    y["SPX Buy & Hold (%)"] = ((y["last"]/y["first"])-1).mul(100).round(2)
-    return y[y["Year"] != exclude_year][["Year","SPX Buy & Hold (%)"]]
-
-# ── UI ─────────────────────────────────────────────────────────────────────────
-st.title(f"{ENGINE_ID} — Custom Engine Backtest")
-st.markdown("### Sequential Backtest · Real-Time Data · 9-Year Window")
-st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Engine",    ENGINE_ID)
-c2.metric("Mode",      ENGINE_MODE)
-c3.metric("SMAs",      f"{SMA_FAST} / {SMA_MID} / {SMA_SLOW}")
-c4.metric("Stop Loss", f"{abs(STOP_LOSS_PCT):.1f}%")
-st.markdown(f"**Allocation:** {ALLOC_DISPLAY} &nbsp; | &nbsp; **Rule:** `{ALGORITHM_RULE}`")
-st.markdown("---")
-
-if not TICKERS:
-    st.error("No tickers configured for this engine.")
-    st.stop()
-
-# ── Run analysis ───────────────────────────────────────────────────────────────
-with st.spinner(f"Running backtest for {ENGINE_ID}…"):
-    results = {}
-    for ticker in TICKERS:
-        fig, closed, open_t, df_t = run_strategy(ticker, SMA_FAST, SMA_MID, SMA_SLOW, STOP_LOSS_PCT)
-        results[ticker] = {"fig": fig, "closed": closed or [], "open": open_t, "df": df_t}
-
-# ── Portfolio view (multi-ticker) ──────────────────────────────────────────────
-if len(TICKERS) > 1:
-    st.header("Portfolio Overview")
-    valid = {}
-    for ticker, w in zip(TICKERS, WEIGHTS):
-        df_t = results[ticker]["df"]
-        if df_t is not None and "is_green" in df_t.columns:
-            nav_t = build_daily_nav(df_t, STOP_LOSS_PCT)
-            nav_t = nav_t[nav_t.index.year != EXCLUDE_YEAR]
-            valid[ticker] = (nav_t, w)
-
-    if valid:
-        frames = {t: v[0][["daily_ret"]].rename(columns={"daily_ret": f"r_{t}"})
-                  for t, v in valid.items()}
-        merged = pd.concat(frames.values(), axis=1).fillna(0.0).sort_index()
-        merged["r_port"] = sum(merged[f"r_{t}"] * w for t, (_, w) in valid.items())
-        merged["equity"] = (1.0 + merged["r_port"]).cumprod() * 10000.0
-        merged["in_mkt"] = sum((merged[f"r_{t}"] != 0).astype(float) * w
-                                for t, (_, w) in valid.items()) > 0
-        port_nav = pd.DataFrame({"equity": merged["equity"],
-                                  "daily_ret": merged["r_port"],
-                                  "in_market": merged["in_mkt"]}, index=merged.index)
-
-        port_cum = (port_nav["equity"] / port_nav["equity"].iloc[0] - 1.0) * 100.0
-        port_fig = go.Figure()
-        port_fig.add_trace(go.Scatter(x=port_nav.index, y=port_cum, mode="lines",
-            name="Portfolio (Daily NAV)", line=dict(color="#00ff00", width=3)))
-        port_fig = spx_overlay(port_fig, port_nav.index.min(), port_nav.index.max(), EXCLUDE_YEAR)
-        port_fig.update_layout(
-            title={"text": f"{ENGINE_ID} Portfolio (Daily NAV / Mark-to-Market)",
-                   "y":0.95,"x":0.5,"xanchor":"center","yanchor":"top","font":PLOT_TITLE_FONT},
-            xaxis_title="Date", yaxis_title="Cumulative Return (%)",
-            template=DEFAULT_PLOTLY_TEMPLATE, height=500,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            hovermode="x unified")
-        st.plotly_chart(port_fig, use_container_width=True)
-
-        metrics_df, nav_annual = compute_metrics(port_nav)
-        st.subheader("Portfolio Performance Metrics (Daily NAV)")
-        st.dataframe(metrics_df, use_container_width=True, hide_index=True)
-        st.subheader("Portfolio Annual Performance (Daily NAV)")
-        st.dataframe(nav_annual, use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-
-# ── Per-ticker analysis ────────────────────────────────────────────────────────
-st.header("Individual Ticker Analysis" if len(TICKERS) > 1 else "Backtest Analysis")
-
-for ticker in TICKERS:
-    if len(TICKERS) > 1:
-        st.subheader(ticker)
-
-    res = results[ticker]
-    fig, closed_trades, open_trade, df_t = (
-        res["fig"], res["closed"], res["open"], res["df"])
-
-    if fig is None or df_t is None:
-        st.error(f"Could not load data for {ticker}.")
-        continue
-
-    # 1) Candlestick + per-trade return chart
-    st.plotly_chart(fig, use_container_width=True)
-
-    if open_trade:
-        st.markdown(
-            f"<div style='background:#f0f0f0;border-radius:5px;padding:10px;"
-            f"color:#000;font-weight:bold;'>"
-            f"Active Trade since {open_trade['buy_date_str']} | "
-            f"Buy: ${open_trade['buy_price']:.2f} → Now: ${open_trade['latest_price']:.2f} | "
-            f"Unrealized: {open_trade['unrealized_return']:+.2f}%"
-            f"</div><div style='margin-bottom:25px;'></div>",
-            unsafe_allow_html=True)
-
-    closed_f = [t for t in closed_trades
-                if pd.to_datetime(t["sell_date"]).tz_localize(None).year != EXCLUDE_YEAR]
-    if not closed_f:
-        st.info(f"No closed trades for {ticker}.")
-        if len(TICKERS) > 1:
-            st.markdown("---")
-        continue
-
-    # 2) Trade-exit compounding curve
-    equity0 = 10000.0; equity = equity0; curve = []; dates_c = []
-    for t in closed_f:
-        equity *= (1 + t["return"] / 100.0)
-        curve.append((equity / equity0 - 1.0) * 100.0)
-        dates_c.append(pd.to_datetime(t["sell_date"]).tz_localize(None))
-    comp_df = pd.DataFrame({"date": dates_c, "cum_ret": curve}).sort_values("date")
-
-    eq_fig = go.Figure()
-    eq_fig.add_trace(go.Scatter(x=comp_df["date"], y=comp_df["cum_ret"],
-        mode="lines+markers", name=f"{ticker} Strategy (Trade-Exit Compounding)",
-        line=dict(color="#00ff00", width=3)))
-    start_spx = max(closed_f[0]["buy_date"].tz_localize(None), pd.Timestamp("2017-01-01"))
-    end_spx   = closed_f[-1]["sell_date"].tz_localize(None) + pd.Timedelta(days=60)
-    eq_fig = spx_overlay(eq_fig, start_spx, end_spx, EXCLUDE_YEAR)
-    eq_fig.update_layout(
-        title={"text": f"{ticker} Strategy (Trade-Exit Compounding)",
-               "y":0.95,"x":0.5,"xanchor":"center","yanchor":"top","font":PLOT_TITLE_FONT},
-        xaxis_title="Date", yaxis_title="Cumulative Return (%)",
-        template=DEFAULT_PLOTLY_TEMPLATE, height=500,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x unified")
-    st.plotly_chart(eq_fig, use_container_width=True)
-
-    # 3) Annual trade-exit table
-    ann_te = annual_trade_exit(closed_f)
-    spx_ann = spx_annual(closed_f[0]["buy_date"].tz_localize(None),
-                          closed_f[-1]["sell_date"].tz_localize(None) + pd.Timedelta(days=2),
-                          EXCLUDE_YEAR)
-    if not spx_ann.empty:
-        ann_te = ann_te.merge(spx_ann, on="Year", how="left")
-    st.subheader(f"Annual Performance — Trade-Exit Compounding ({ticker})")
-    st.dataframe(ann_te, use_container_width=True, hide_index=True)
-
-    # 4) Performance metrics (daily NAV)
-    nav_df = build_daily_nav(df_t, STOP_LOSS_PCT)
-    nav_ex  = nav_df[nav_df.index.year != EXCLUDE_YEAR].copy()
-    metrics_df, nav_annual = compute_metrics(nav_ex)
-    st.subheader(f"Performance Metrics — Daily NAV ({ticker})")
-    st.dataframe(metrics_df, use_container_width=True, hide_index=True)
-
-    # 5) Daily NAV compounding chart
-    nav_cum = (nav_ex["equity"] / nav_ex["equity"].iloc[0] - 1.0) * 100.0
-    nav_fig = go.Figure()
-    nav_fig.add_trace(go.Scatter(x=nav_ex.index, y=nav_cum, mode="lines",
-        name=f"{ticker} Strategy (Daily NAV / Mark-to-Market)",
-        line=dict(color="#00ff00", width=3)))
-    nav_fig = spx_overlay(nav_fig, nav_ex.index.min(), nav_ex.index.max(), EXCLUDE_YEAR)
-    nav_fig.update_layout(
-        title={"text": f"{ticker} Strategy (Daily NAV / Mark-to-Market)",
-               "y":0.95,"x":0.5,"xanchor":"center","yanchor":"top","font":PLOT_TITLE_FONT},
-        xaxis_title="Date", yaxis_title="Cumulative Return (%)",
-        template=DEFAULT_PLOTLY_TEMPLATE, height=450,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x unified")
-    st.plotly_chart(nav_fig, use_container_width=True)
-
-    # 6) Annual NAV table
-    st.subheader(f"Annual Performance — Daily NAV ({ticker})")
-    st.dataframe(nav_annual, use_container_width=True, hide_index=True)
-
-    # 7) Executed trades
-    trade_rows = [{"Buy": t["buy_date_str"], "Sell": t["sell_date_str"],
-                   "Buy $": f"${t['buy_price']:.2f}", "Sell $": f"${t['sell_price']:.2f}",
-                   "Return": f"{t['return']:+.2f}%",
-                   "Days": int((t["sell_date"] - t["buy_date"]).days),
-                   "Exit": t.get("exit_type","")} for t in closed_f]
-    st.subheader(f"Executed Trades — {ticker} ({len(trade_rows)})")
-    st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
-
-    if len(TICKERS) > 1:
-        st.markdown("---")
-BACKTEST_PY
-
 REMOTE_INSTALL_EOF
 }
 
@@ -4444,7 +3856,6 @@ ssh_into_instance_menu() {
   ui_info "Connecting to VM (control panel)…"
   set_term_title "ALGORA1's TUI - Automated Algorithmic Investments - $(detect_os)"
   exec ssh -tt \
-    -L 8502:localhost:8502 \
     -o LogLevel=ERROR \
     -o StrictHostKeyChecking=accept-new \
     -o ServerAliveInterval=30 \
@@ -4517,7 +3928,7 @@ main() {
   fi
 
   if [ "$(detect_os)" = "macos" ]; then
-    ensure_macos_app_bundle_present "${ALGORA1_ICNS_PATH:-}" || true
+    ensure_macos_app_bundle_present "${ALGORA1_ICNS_PATH:-}" >/dev/null 2>&1 || true
   fi
 
   ensure_ssh_key
