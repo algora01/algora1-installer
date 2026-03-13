@@ -366,22 +366,23 @@ install_local_cli() {
   if [ "${0##*/}" = "bash" ] || [ "${0##*/}" = "sh" ] || [ ! -f "${0}" ]; then
     : "${ALGORA1_INSTALL_URL:=https://raw.githubusercontent.com/algora01/algora1-installer/main/algora1.sh}"
     need_cmd curl || ui_die "curl is required to install the local command."
-
     curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" 2>/dev/null || ui_die "Failed to download installer."
     chmod +x "${target}"
   else
     local self
     self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-    cp -f "$self" "$target"
-    chmod +x "$target"
+    if [ "$self" != "$target" ]; then
+      cp -f "$self" "$target" 2>/dev/null || true
+      chmod +x "$target"
+    fi
   fi
 
   if [ "$(detect_os)" = "macos" ]; then
     local zshrc="${HOME}/.zshrc"
     local line='export PATH="$HOME/.local/bin:$PATH"'
     touch "$zshrc"
-    if ! grep -Fqx "$line" "$zshrc"; then
-      printf "\n# algora1\n%s\n" "$line" >> "$zshrc"
+    if ! grep -Fqx "$line" "$zshrc" 2>/dev/null; then
+      printf "\n# algora1\n%s\n" "$line" >> "$zshrc" 2>/dev/null || true
     fi
     export PATH="$HOME/.local/bin:$PATH"
   fi
@@ -597,91 +598,93 @@ EOF
 }
 
 if [ "${1:-}" = "--install-local" ]; then
-  # Clean full-screen install UI — suppress all intermediate noise
   _install_clean() {
+    # Use tput for colors so escape sequences go to tty, not bash's stdin pipe
+    local C_BOX="" C_OK="" C_RESET=""
+    if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
+      C_BOX="$(tput setaf 6 2>/dev/null || true)"    # cyan
+      C_OK="$(tput setaf 2 2>/dev/null || true)"     # green
+      C_RESET="$(tput sgr0 2>/dev/null || true)"
+    fi
+
     local cols rows
     cols="$(tput cols 2>/dev/null || echo 80)"
     rows="$(tput lines 2>/dev/null || echo 24)"
-    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
-    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
-
-    # Clear screen fully
-    printf '\033[?25l\033[H\033[2J\033[3J' 2>/dev/null || true
+    case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
+    case "$rows" in ''|*[!0-9]*) rows=24 ;; esac
 
     local width=54
     [ "$width" -gt $((cols - 4)) ] && width=$((cols - 4))
-    local left=$(( (cols - width - 2) / 2 ))
-    [ "$left" -lt 0 ] && left=0
     local inner=$((width - 2))
-    local hline
-    printf -v hline '%*s' "$inner" ''; hline="${hline// /─}"
-    local top_pad=$(( (rows - 12) / 2 ))
+    local left=$(( (cols - width) / 2 ))
+    [ "$left" -lt 0 ] && left=0
+
+    # Build hline without printf -v (POSIX compatible)
+    local hline i
+    hline=""
+    i=0
+    while [ "$i" -lt "$inner" ]; do hline="${hline}─"; i=$((i+1)); done
+
+    local top_pad=$(( (rows - 10) / 2 ))
     [ "$top_pad" -lt 0 ] && top_pad=0
 
-    _iline() {
-      local txt="$1"
-      local plain len lp rp
-      plain="$(printf '%s' "$txt" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')"
-      len="${#plain}"
-      [ "$len" -gt "$((inner - 2))" ] && len=$((inner - 2)) && txt="${plain:0:$len}"
-      lp=$(( (inner - 2 - len) / 2 ))
-      rp=$(( inner - 2 - len - lp ))
-      printf '%*s\033[38;5;39m│\033[0m %*s%s%*s \033[38;5;39m│\033[0m\n' \
-        "$left" '' "$lp" '' "$txt" "$rp" ''
+    _draw_box() {
+      local line1="$1" line2="$2" line3="${3:-}"
+      printf '\033[H\033[2J\033[3J' > /dev/tty 2>/dev/null || true
+      i=0; while [ "$i" -lt "$top_pad" ]; do printf '\n' > /dev/tty; i=$((i+1)); done
+      printf '%*s%s╭%s╮%s\n' "$left" '' "$C_BOX" "$hline" "$C_RESET" > /dev/tty
+      printf '%*s%s│%s%*s%s%s│%s\n' "$left" '' "$C_BOX" "$C_RESET" "$inner" '' '' "$C_BOX" "$C_RESET" > /dev/tty
+
+      local txt plain len lp rp
+      for txt in "$line1" "$line2" "$line3"; do
+        [ -n "$txt" ] || txt=""
+        plain="$txt"; len="${#plain}"
+        lp=$(( (inner - len) / 2 )); rp=$(( inner - len - lp ))
+        [ "$lp" -lt 0 ] && lp=0; [ "$rp" -lt 0 ] && rp=0
+        printf '%*s%s│%s%*s%s%*s%s│%s\n' \
+          "$left" '' "$C_BOX" "$C_RESET" "$lp" '' "$txt" "$rp" '' "$C_BOX" "$C_RESET" > /dev/tty
+      done
+
+      printf '%*s%s│%s%*s%s%s│%s\n' "$left" '' "$C_BOX" "$C_RESET" "$inner" '' '' "$C_BOX" "$C_RESET" > /dev/tty
+      printf '%*s%s╰%s╯%s\n' "$left" '' "$C_BOX" "$hline" "$C_RESET" > /dev/tty
     }
 
-    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
+    printf '\033[?25l' > /dev/tty 2>/dev/null || true
 
-    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline"
-    _iline ''
-    _iline 'ALGORA1'
-    _iline 'Installing...'
-    _iline ''
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$inner" ''
-
-    # Step 1 — install CLI
-    _iline '  Installing command...'
-    printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
-
+    _draw_box "ALGORA1" "Installing..."
     install_local_cli 2>/dev/null
 
-    # Redraw with step 2
-    printf '\033[H\033[2J\033[3J' 2>/dev/null || true
-    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
-    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline"
-    _iline ''
-    _iline 'ALGORA1'
-    _iline 'Installing...'
-    _iline ''
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$inner" ''
-
     if [ "$(detect_os)" = "linux" ]; then
-      _iline '  Setting up desktop shortcut...'
-      printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
+      _draw_box "ALGORA1" "Installing..." "Setting up shortcut..."
       install_linux_desktop_shortcut \
         "https://static.wixstatic.com/media/ce61ee_00cd47ee0f9c48f69f0f7546f4298188~mv2.png" \
         2>/dev/null || true
     elif [ "$(detect_os)" = "macos" ]; then
-      _iline '  Setting up app bundle...'
-      printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
+      _draw_box "ALGORA1" "Installing..." "Setting up app bundle..."
       install_macos_app_bundle "${ALGORA1_ICNS_PATH:-}" 2>/dev/null || true
     fi
 
-    # Final success screen
-    printf '\033[?25h\033[H\033[2J\033[3J' 2>/dev/null || true
-    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
-    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline"
-    _iline ''
-    _iline 'ALGORA1'
-    _iline '\033[38;5;40m✓ Installation complete\033[0m'
-    _iline ''
-    _iline 'Run: algora1'
-    if [ "$(detect_os)" = "macos" ]; then
-      _iline 'App: ~/Applications/ALGORA1.app'
-    fi
-    _iline ''
-    printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
-    printf '\n'
+    # Success screen
+    printf '\033[?25h' > /dev/tty 2>/dev/null || true
+    printf '\033[H\033[2J\033[3J' > /dev/tty 2>/dev/null || true
+    i=0; while [ "$i" -lt "$top_pad" ]; do printf '\n' > /dev/tty; i=$((i+1)); done
+    printf '%*s%s╭%s╮%s\n' "$left" '' "$C_BOX" "$hline" "$C_RESET" > /dev/tty
+    printf '%*s%s│%s%*s%s%s│%s\n' "$left" '' "$C_BOX" "$C_RESET" "$inner" '' '' "$C_BOX" "$C_RESET" > /dev/tty
+
+    local txt plain len lp rp
+    for txt in "ALGORA1" "${C_OK}✓ Installation complete${C_RESET}" "" "Run: algora1" "App: ~/Applications/ALGORA1.app"; do
+      [ "$(detect_os)" != "macos" ] && [ "$txt" = "App: ~/Applications/ALGORA1.app" ] && continue
+      plain="$(printf '%s' "$txt" | sed 's/\x1b\[[0-9;]*m//g' 2>/dev/null || printf '%s' "$txt")"
+      len="${#plain}"
+      lp=$(( (inner - len) / 2 )); rp=$(( inner - len - lp ))
+      [ "$lp" -lt 0 ] && lp=0; [ "$rp" -lt 0 ] && rp=0
+      printf '%*s%s│%s%*s%s%*s%s│%s\n' \
+        "$left" '' "$C_BOX" "$C_RESET" "$lp" '' "$txt" "$rp" '' "$C_BOX" "$C_RESET" > /dev/tty
+    done
+
+    printf '%*s%s│%s%*s%s%s│%s\n' "$left" '' "$C_BOX" "$C_RESET" "$inner" '' '' "$C_BOX" "$C_RESET" > /dev/tty
+    printf '%*s%s╰%s╯%s\n' "$left" '' "$C_BOX" "$hline" "$C_RESET" > /dev/tty
+    printf '\n' > /dev/tty
   }
 
   ensure_gum >/dev/null 2>&1 || true
@@ -3979,7 +3982,7 @@ main() {
   ensure_defaults
 
   if [ "$(detect_os)" = "macos" ]; then
-    install_local_cli
+    install_local_cli >/dev/null 2>&1 || true
   fi
 
   if [ "$(detect_os)" = "macos" ]; then
