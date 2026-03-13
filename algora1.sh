@@ -3825,7 +3825,8 @@ run_custom_engine_session() {
     local _top_row=$(( (_sub_rows - 7) / 2 ))
     [ "$_top_row" -lt 0 ] && _top_row=0
     local _prompt_row=$(( _top_row + 3 ))
-    local _prompt_col=$(( _sub_left + 2 + ${#"Enter your User ID (cus_xxx): "} + 1 ))
+    local _prompt_label="Enter your User ID (cus_xxx): "
+    local _prompt_col=$(( _sub_left + 2 + ${#_prompt_label} + 1 ))
     printf '\033[%d;%dH' "$_prompt_row" "$_prompt_col"
     printf '\033[?25h'
     stty sane < /dev/tty 2>/dev/null || true
