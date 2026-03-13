@@ -2777,14 +2777,14 @@ validate_engine_id() {
 }
 
 sanitize_engine_id() {
-  local raw trimmed letters
+  local raw cleaned trimmed
   raw="$(printf "%s" "$1" | tr -d '\r')"
-  trimmed="$(printf "%s" "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  letters="$(printf "%s" "$trimmed" | tr -cd 'A-Za-z')"
-  # Must be exactly 4 letters and nothing else.
-  [ "${#letters}" -eq 4 ] || return 1
-  [ "${#letters}" -eq "${#trimmed}" ] || return 1
-  printf "%s" "$letters" | tr '[:lower:]' '[:upper:]'
+  # Strip ANSI escape sequences and control characters that may leak from TUI state.
+  cleaned="$(printf "%s" "$raw" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g')"
+  cleaned="$(printf "%s" "$cleaned" | tr -d '\001-\031\177')"
+  trimmed="$(printf "%s" "$cleaned" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [[ "$trimmed" =~ ^[A-Za-z]{4}$ ]] || return 1
+  printf "%s" "$trimmed" | tr '[:lower:]' '[:upper:]'
 }
 
 custom_engine_exists() {
@@ -3071,6 +3071,7 @@ prompt_box_input() {
   input_col=$((left + 3 + ${#prompt_label} + 1))
 
   printf '\033[%d;%dH' "$input_row" "$input_col" > /dev/tty
+  stty echo icanon 2>/dev/null || true
   IFS= read -r value < /dev/tty || true
 
   cursor_hide
