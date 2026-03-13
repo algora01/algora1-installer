@@ -3002,13 +3002,17 @@ draw_header_once() {
   echo ""
 }
 
+# Global variable used by prompt_box_input to return the typed value
+# without a subshell, which corrupts tty state and captures ANSI noise.
+_PROMPT_BOX_RESULT=""
+
 prompt_box_input() {
   local prompt="$1"
+  _PROMPT_BOX_RESULT=""
   local value=""
   local rows cols width inner left top
   local prompt_label="Input:"
   local prompt_text=""
-  local input_max=20
 
   ui_restore_tty
   ui_drain_input
@@ -3075,7 +3079,9 @@ prompt_box_input() {
 
   cursor_hide
   ui_drain_input
-  printf '%s\n' "$value"
+  # Store result in global — never use $() to call this function, as the
+  # subshell breaks tty state and causes ANSI escape bytes to bleed into value.
+  _PROMPT_BOX_RESULT="$value"
 }
 
 show_custom_engine_summary_box() {
@@ -3121,7 +3127,8 @@ custom_engine_builder_guided() {
   hard_clear
 
   local raw_id id mode universe
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
+  prompt_box_input "Enter Custom Engine Name (4 letters):"
+  raw_id="$_PROMPT_BOX_RESULT"
   id="$(sanitize_engine_id "$raw_id")" || {
     show_notice_with_return "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     return 0
@@ -3211,7 +3218,8 @@ custom_engine_builder_advanced() {
   hard_clear
 
   local raw_id id mode
-  raw_id="$(prompt_box_input "Enter Custom Engine Name (4 letters):")"
+  prompt_box_input "Enter Custom Engine Name (4 letters):"
+  raw_id="$_PROMPT_BOX_RESULT"
   id="$(sanitize_engine_id "$raw_id")" || {
     show_centered_info_box "Invalid Custom Engine Name: use exactly 4 letters (A-Z)."
     pause_return_box
