@@ -732,7 +732,7 @@ fast_path_to_control_panel_if_ready() {
   ui_spin "Verifying backtest dependencies…" \
     ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
     "${REMOTE_USER}@${ip}" \
-    "pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || true"
+    "command -v pip3 >/dev/null 2>&1 || sudo apt-get install -y python3-pip >/dev/null 2>&1 || true; pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --user >/dev/null 2>&1 || true"
 
   if [ "$(detect_os)" = "macos" ]; then
     ensure_macos_app_bundle_present "${ALGORA1_ICNS_PATH:-}" >/dev/null 2>&1 || true
@@ -3530,16 +3530,25 @@ view_custom_engines_menu() {
         fi
 
         if ! command -v streamlit >/dev/null 2>&1; then
-          # Try to install it automatically
+          # Ensure pip is installed (Ubuntu 24 ships without it by default)
           hard_clear
           center_box "$(printf "Installing backtest dependencies...\nThis may take 1-2 minutes.")" 0 60 1
-          pip3 install streamlit plotly yfinance pandas numpy pytz \
-            --quiet --break-system-packages >/dev/null 2>&1 || true
-          # Check again after install attempt
-          if ! command -v streamlit >/dev/null 2>&1; then
-            show_notice_with_return "$(printf "Could not install streamlit automatically.\n\nRun manually in your shell:\npip3 install streamlit --break-system-packages\n\nThen try again.")"
-            return 0
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get install -y python3-pip >/dev/null 2>&1 || true
           fi
+          pip3 install streamlit plotly yfinance pandas numpy pytz \
+            --quiet --break-system-packages >/dev/null 2>&1 || \
+          pip3 install streamlit plotly yfinance pandas numpy pytz \
+            --quiet --user >/dev/null 2>&1 || true
+          # Reload PATH so newly installed bin dir is found
+          export PATH="${HOME}/.local/bin:/usr/local/bin:${PATH}"
+          hash -r 2>/dev/null || true
+        fi
+
+        # Final check — still not found means hard failure
+        if ! command -v streamlit >/dev/null 2>&1; then
+          show_notice_with_return "$(printf "Could not install streamlit automatically.\n\nSSH into the VM and run:\nsudo apt-get install -y python3-pip\npip3 install streamlit plotly yfinance pandas numpy pytz --break-system-packages\n\nThen try again.")"
+          return 0
         fi
 
         nohup streamlit run "$bt_script" \
@@ -3913,11 +3922,15 @@ if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get update -y >/dev/null 2>&1 || true
   command -v screen >/dev/null 2>&1 || sudo apt-get install -y screen >/dev/null 2>&1 || true
   command -v zip >/dev/null 2>&1 || sudo apt-get install -y zip >/dev/null 2>&1 || true
+  # Ensure pip is available (Ubuntu 24.04 does not ship python3-pip by default)
+  command -v pip3 >/dev/null 2>&1 || sudo apt-get install -y python3-pip >/dev/null 2>&1 || true
 fi
 
-# Install backtest Python dependencies (non-blocking)
+# Install backtest Python dependencies
 pip3 install streamlit plotly yfinance pandas numpy pytz \
-  --quiet --break-system-packages >/dev/null 2>&1 || true
+  --quiet --break-system-packages >/dev/null 2>&1 || \
+pip3 install streamlit plotly yfinance pandas numpy pytz \
+  --quiet --user >/dev/null 2>&1 || true
 
 # Write the custom engine backtest Streamlit app
 mkdir -p "${HOME}/.algora1_custom"
@@ -4442,7 +4455,7 @@ main() {
   ui_spin "Installing backtest dependencies…" \
     ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
     "${REMOTE_USER}@${ip}" \
-    "pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || true"
+    "command -v pip3 >/dev/null 2>&1 || sudo apt-get install -y python3-pip >/dev/null 2>&1 || true; pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --user >/dev/null 2>&1 || true"
 
   completion_screen "${ip}"
 }
