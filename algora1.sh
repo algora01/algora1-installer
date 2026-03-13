@@ -2340,7 +2340,7 @@ allocation_error_reason() {
 
   # Check for special characters beyond digits and commas
   if [[ "$csv" =~ [^0-9,] ]]; then
-    printf "Special characters are not allowed. Use digits and commas only (e.g. 50,50)."; return
+    printf "Special characters are not allowed.\nUse digits and commas only."; return
   fi
 
   IFS=',' read -r -a _err_arr <<< "$csv"
@@ -2384,15 +2384,36 @@ prompt_allocation_csv() {
   IFS=',' read -r -a _tickers <<< "$ticker_csv"
   expected="${#_tickers[@]}"
 
-  local rules_msg
-  rules_msg="$(printf \
-    "Tickers: %s\n\nEnter one whole-number percentage per ticker, comma-separated.\nRules:\n  • No decimals or fractions  (e.g. 50.5 is invalid)\n  • No special characters     (digits and commas only)\n  • Each value must be 1–100\n  • No zeros                  (every ticker needs at least 1%%)\n  • Total must be ≤ 100%%     (e.g. 60,30 is valid; 60,50 exceeds 100%%)\n  • Exactly %d value(s) required, one per ticker" \
-    "$ticker_csv" "$expected")"
-
   while true; do
     draw_header_once
-    # Show the allocation rules box before the input prompt
-    center_box "$rules_msg" 0 76 0
+
+    # Box contains only the tickers line
+    center_box "Tickers: $ticker_csv" 0 76 0
+    echo ""
+
+    # Compute left indent to align bullets with box content start
+    local cols
+    cols="$(tput cols 2>/dev/null || echo 80)"
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+    local tl_len=${#ticker_csv}
+    tl_len=$((tl_len + 9))   # "Tickers: " prefix = 9 chars
+    local inner_w=$((tl_len + 4))
+    [ "$inner_w" -gt $((cols - 6)) ] && inner_w=$((cols - 6))
+    [ "$inner_w" -lt 4 ] && inner_w=4
+    local box_w=$((inner_w + 2))
+    local box_left=$(( (cols - box_w) / 2 ))
+    [ "$box_left" -lt 0 ] && box_left=0
+    local bi=$((box_left + 3))
+    [ "$bi" -lt 0 ] && bi=0
+
+    printf '%*sEnter one whole-number percentage per ticker, comma-separated.\n' "$bi" ""
+    echo ""
+    printf '%*s• No decimals or fractions (e.g. 50.5 is invalid)\n' "$bi" ""
+    printf '%*s• No special characters (digits and commas only)\n' "$bi" ""
+    printf '%*s• Each value must be 1–100\n' "$bi" ""
+    printf '%*s• No zeros (every ticker needs at least 1%%)\n' "$bi" ""
+    printf '%*s• Total must be ≤ 100%% (e.g. 60,30 is valid; 60,50 exceeds 100%%)\n' "$bi" ""
+    printf '%*s• Exactly %d value(s) required, one per ticker\n' "$bi" "" "$expected"
     echo ""
 
     allocations="$(input "Percentages (example: 50,50):")"
@@ -2408,9 +2429,12 @@ prompt_allocation_csv() {
   done
 }
 
+_PROMPT_STOP_LOSS_RESULT=""
+
 prompt_stop_loss() {
   local prompt="${1:-Stop loss percent}"
   local default="${2:-6}"
+  _PROMPT_STOP_LOSS_RESULT=""
   local sl=""
   local err=""
 
@@ -2421,7 +2445,7 @@ prompt_stop_loss() {
     sl="${sl:-$default}"
 
     if validate_stop_loss "$sl"; then
-      printf '%s\n' "$sl"
+      _PROMPT_STOP_LOSS_RESULT="$sl"
       return 0
     fi
 
@@ -3237,7 +3261,8 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
 
     tickers="$ticker"
 
-    stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
+    prompt_stop_loss "Stop loss percent" "6"
+    stop_loss="$_PROMPT_STOP_LOSS_RESULT"
   else
     draw_header_once
     industry="$(choose "Select industry" "${CUSTOM_INDUSTRIES[@]}" "Back")"
@@ -3275,6 +3300,35 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
   ui_wait_enter_only
 }
 
+validate_sma_length() {
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  [ "$v" -ge 2 ] && [ "$v" -le 500 ]
+}
+
+_PROMPT_SMA_RESULT=""
+
+prompt_sma_length() {
+  local label="$1"
+  local min_val="${2:-2}"
+  local max_val="${3:-500}"
+  _PROMPT_SMA_RESULT=""
+  local val="" err=""
+
+  while true; do
+    draw_header_once
+    [ -n "$err" ] && printf '\033[38;5;196m%s\033[0m\n\n' "$err" >&2
+    val="$(input "${label} (${min_val}–${max_val}):")"
+
+    if [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge "$min_val" ] && [ "$val" -le "$max_val" ]; then
+      _PROMPT_SMA_RESULT="$val"
+      return 0
+    fi
+
+    err="Enter a whole number from ${min_val} to ${max_val}."
+  done
+}
+
 custom_engine_builder_advanced() {
   ensure_custom_dirs
   hard_clear
@@ -3304,6 +3358,16 @@ custom_engine_builder_advanced() {
 
   if [ -z "$ticker_csv" ]; then
     show_notice_with_return "Ticker list cannot be empty."
+    return 0
+  fi
+
+  # Duplicate ticker check
+  local -a _dup_arr
+  IFS=',' read -r -a _dup_arr <<< "$ticker_csv"
+  local _uniq_count
+  _uniq_count="$(printf "%s\n" "${_dup_arr[@]}" | sort -u | wc -l | tr -d ' ')"
+  if [ "${#_dup_arr[@]}" -ne "$_uniq_count" ]; then
+    show_notice_with_return "Duplicate tickers are not allowed.\n\nPlease enter each ticker only once."
     return 0
   fi
 
@@ -3345,15 +3409,19 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
       ;;
     "Custom SMA Lengths")
       local sma_fast sma_mid sma_slow
-      sma_fast="$(input "Fast SMA length:")"
-      sma_mid="$(input "Mid SMA length:")"
-      sma_slow="$(input "Slow SMA length:")"
+      prompt_sma_length "Fast SMA length" 2 200
+      sma_fast="$_PROMPT_SMA_RESULT"
+      prompt_sma_length "Mid SMA length" $((sma_fast + 1)) 300
+      sma_mid="$_PROMPT_SMA_RESULT"
+      prompt_sma_length "Slow SMA length" $((sma_mid + 1)) 500
+      sma_slow="$_PROMPT_SMA_RESULT"
       algorithm_rule="BUY if price > SMA${sma_slow} and SMA${sma_fast} > SMA${sma_mid} and NOT(price < SMA${sma_mid}), else SELL"
       ;;
   esac
 
   local stop_loss
-  stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
+  prompt_stop_loss "Stop loss percent" "6"
+  stop_loss="$_PROMPT_STOP_LOSS_RESULT"
 
   save_custom_meta "$id" \
     ENGINE_ID "$id" \
