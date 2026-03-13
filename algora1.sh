@@ -1632,7 +1632,7 @@ printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 if [ -n "${ALGORA1_CUSTOM_ENGINE_ID:-}" ]; then
   [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
   [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
-  local _custom_bin="${HOME}/.algora1_custom/builds/${ALGORA1_CUSTOM_ENGINE_ID}/${ALGORA1_CUSTOM_ENGINE_ID}"
+  _custom_bin="${HOME}/.algora1_custom/builds/${ALGORA1_CUSTOM_ENGINE_ID}/${ALGORA1_CUSTOM_ENGINE_ID}"
   if [ -f "$_custom_bin" ]; then
     chmod +x "$_custom_bin" 2>/dev/null || true
     exec "$_custom_bin"
@@ -3800,7 +3800,9 @@ run_custom_engine_session() {
     local prompt_content="${plabel}${user_text}"
     local pc_pad=$(( inner - ${#prompt_content} ))
     [ "$pc_pad" -lt 0 ] && pc_pad=0
-    local lt_pad=$(( inner - ${#loading_text} ))
+    local lt_plain
+    lt_plain="$(printf '%s' "$loading_text" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')"
+    local lt_pad=$(( inner - ${#lt_plain} ))
     [ "$lt_pad" -lt 0 ] && lt_pad=0
 
     printf '\033[H\033[2J\033[3J' > /dev/tty
@@ -3832,7 +3834,7 @@ run_custom_engine_session() {
 
     if [ -z "$user_id" ]; then
       # Show error inline in same box (red), matching Python engine style
-      _draw_sub_login_box "" "\033[38;5;196mUser ID cannot be empty!\033[0m"
+      _draw_sub_login_box "" $'\033[38;5;196mUser ID cannot be empty!\033[0m'
       sleep 1.5
       continue
     fi
@@ -3876,7 +3878,7 @@ run_custom_engine_session() {
       break
     else
       # Show error inline in same box (red), matching Python engine style
-      _draw_sub_login_box "$user_id" "\033[38;5;196mSubscription not active or invalid ID.\033[0m"
+      _draw_sub_login_box "$user_id" $'\033[38;5;196mSubscription not active or invalid ID.\033[0m'
       sleep 2
     fi
   done
