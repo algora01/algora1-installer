@@ -2391,19 +2391,14 @@ prompt_allocation_csv() {
     center_box "Tickers: $ticker_csv" 0 76 0
     echo ""
 
-    # Compute left indent to align bullets with box content start
+    # Center the rules block based on the longest line in the block
     local cols
     cols="$(tput cols 2>/dev/null || echo 80)"
     [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
-    local tl_len=${#ticker_csv}
-    tl_len=$((tl_len + 9))   # "Tickers: " prefix = 9 chars
-    local inner_w=$((tl_len + 4))
-    [ "$inner_w" -gt $((cols - 6)) ] && inner_w=$((cols - 6))
-    [ "$inner_w" -lt 4 ] && inner_w=4
-    local box_w=$((inner_w + 2))
-    local box_left=$(( (cols - box_w) / 2 ))
-    [ "$box_left" -lt 0 ] && box_left=0
-    local bi=$((box_left + 3))
+    # Longest line: "Enter one whole-number percentage per ticker, comma-separated." = 62 chars
+    # Use that as the block width; center it on terminal
+    local block_w=62
+    local bi=$(( (cols - block_w) / 2 ))
     [ "$bi" -lt 0 ] && bi=0
 
     printf '%*sEnter one whole-number percentage per ticker, comma-separated.\n' "$bi" ""
