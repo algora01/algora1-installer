@@ -2161,7 +2161,9 @@ cursor_hide() { printf '\033[?25l' 2>/dev/null || true; }
 cursor_show() { printf '\033[?25h' 2>/dev/null || true; }
 
 _visible_len() {
-  printf '%s' "$1" | sed -E $'s/\x1B\[[0-9;]*[A-Za-z]//g' | awk '{ print length($0) }'
+  local s
+  s="$(printf '%s' "$1" | sed -E $'s/\x1B\[[0-9;]*[A-Za-z]//g')"
+  printf '%s' "${#s}"
 }
 
 _pad_right() {
@@ -2207,6 +2209,7 @@ render_box() {
     lines=$((lines + 1))
     local vlen
     vlen="$(_visible_len "$line")"
+    case "$vlen" in ''|*[!0-9]*) vlen=0 ;; esac
     [ "$vlen" -gt "$longest" ] && longest="$vlen"
   done < <(printf '%b' "$msg")
   [ "$lines" -eq 0 ] && lines=1
@@ -2284,7 +2287,7 @@ show_simple_notice() {
 }
 
 pause_return_box() {
-  show_notice_with_return ""
+  ui_wait_enter_only
 }
 
 validate_stop_loss() {
@@ -2937,59 +2940,74 @@ draw_header_once() {
 prompt_box_input() {
   local prompt="$1"
   local value=""
-  local rows cols width inner left box_h top
-  local prompt_row input_row input_col
+  local rows cols width inner left top
+  local prompt_label="Input:"
+  local prompt_text=""
+  local input_max=20
 
   ui_restore_tty
   ui_drain_input
+  cursor_show
   hard_clear
 
   rows="$(tput lines 2>/dev/null || echo 24)"
   cols="$(tput cols 2>/dev/null || echo 80)"
-  [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
-  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+  case "$rows" in ''|*[!0-9]*) rows=24 ;; esac
+  case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
 
   width=76
   [ "$width" -gt $((cols - 2)) ] && width=$((cols - 2))
-  [ "$width" -lt 40 ] && width=40
+  [ "$width" -lt 44 ] && width=44
 
   inner=$((width - 4))
   left=$(( (cols - width) / 2 ))
   [ "$left" -lt 0 ] && left=0
 
-  # 5 content rows:
-  # blank
-  # title
-  # blank
-  # prompt
-  # blank
-  box_h=7
-  top=$(( (rows - box_h) / 2 ))
+  top=$(( (rows - 9) / 2 ))
   [ "$top" -lt 0 ] && top=0
 
-  printf '\033[H\033[2J\033[3J' 2>/dev/null || true
-  [ "$top" -gt 0 ] && printf '%*s' 0 '' && printf '\n%.0s' $(seq 1 "$top")
+  printf '\033[H\033[2J\033[3J' > /dev/tty
 
-  printf '%*s\033[38;5;39m╭%*s╮\033[0m\n' "$left" '' $((width - 2)) '' | sed 's/ /─/3'
-  printf '%*s\033[38;5;39m│\033[0m %-*s \033[38;5;39m│\033[0m\n' "$left" '' "$inner" ""
-  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
-    "$left" '' "$(_pad_center "ALGORA1 — Control Panel" "$inner")"
-  printf '%*s\033[38;5;39m│\033[0m %-*s \033[38;5;39m│\033[0m\n' "$left" '' "$inner" ""
-  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
-    "$left" '' "$(_pad_right "$prompt" "$inner")"
-  printf '%*s\033[38;5;39m│\033[0m %-*s \033[38;5;39m│\033[0m\n' "$left" '' "$inner" ""
-  printf '%*s\033[38;5;39m╰%*s╯\033[0m\n' "$left" '' $((width - 2)) '' | sed 's/ /─/3'
+  if [ "$top" -gt 0 ]; then
+    local i
+    for ((i=0; i<top; i++)); do
+      printf '\n' > /dev/tty
+    done
+  fi
 
-  prompt_row=$((top + 5))
-  input_row=$((prompt_row + 1))
-  input_col=$((left + 3))
+  local hline
+  printf -v hline '%*s' $((width - 2)) ''
+  hline="${hline// /─}"
+
+  printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline" > /dev/tty
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$(_pad_center 'ALGORA1 — Control Panel' "$inner")" > /dev/tty
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$(_pad_center 'Welcome to ALGORA1'\''s Terminal UI.' "$inner")" > /dev/tty
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$(_pad_right '' "$inner")" > /dev/tty
+
+  prompt_text="$(_pad_right "$prompt" "$inner")"
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$prompt_text" > /dev/tty
+
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$(_pad_right "${prompt_label}" "$inner")" > /dev/tty
+
+  printf '%*s\033[38;5;39m│\033[0m %s \033[38;5;39m│\033[0m\n' \
+    "$left" '' "$(_pad_right '' "$inner")" > /dev/tty
+  printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline" > /dev/tty
+
+  # Move cursor inside the "Input:" row, right after the label.
+  local input_row input_col
+  input_row=$((top + 6))
+  input_col=$((left + 3 + ${#prompt_label} + 1))
 
   printf '\033[%d;%dH' "$input_row" "$input_col" > /dev/tty
-  cursor_show
   IFS= read -r value < /dev/tty || true
+
   cursor_hide
   ui_drain_input
-
   printf '%s\n' "$value"
 }
 
@@ -3035,14 +3053,12 @@ custom_engine_builder_guided() {
   id="$(normalize_engine_id "$raw_id")"
 
   if ! validate_engine_id "$id"; then
-    show_centered_info_box "Invalid Custom Engine Name: use 1-4 letters only."
-    pause_return_box
+    show_notice_with_return "Invalid Custom Engine Name: use 1-4 letters only."
     return 0
   fi
 
   if custom_engine_exists "$id"; then
-    show_centered_info_box "Custom Engine Name already exists: $id"
-    pause_return_box
+    show_notice_with_return "Invalid Custom Engine Name: use 1-4 letters only."
     return 0
   fi
 
@@ -3230,8 +3246,7 @@ view_custom_engines_menu() {
   [ "$picked" != "Back" ] || return 0
 
   while true; do
-    show_custom_engine_summary_box "$picked"
-    printf "\n"
+    draw_header_once
 
     local action
     action="$(choose "Custom Engine: $picked" \
