@@ -2882,7 +2882,7 @@ log_for_engine() {
     TSLA) echo "tsla_investing.log" ;;
     NVDA) echo "nvda_investing.log" ;;
     PMNY) echo "pmny_investing.log" ;;
-    *) echo "pmny_investing.log" ;;
+    *)    echo "${1,,}_investing.log" ;;
   esac
 }
 
@@ -2892,13 +2892,14 @@ live_status_for_engine() {
     TSLA) echo "tsla_live_status.txt" ;;
     NVDA) echo "nvda_live_status.txt" ;;
     PMNY) echo "pmny_live_status.txt" ;;
-    *) echo "pmny_live_status.txt" ;;
+    *)    echo "${1,,}_live_status.txt" ;;
   esac
 }
 
 detect_running_engine_best_effort() {
-  # Match only executable basename (argv[0]), so plain "TSLA" args don't count.
-  ps -eo args= 2>/dev/null | awk '
+  # Match standard engine executables by argv[0] basename
+  local _std
+  _std="$(ps -eo args= 2>/dev/null | awk '
     {
       cmd=$1
       sub(/^.*\//, "", cmd)
@@ -2909,7 +2910,24 @@ detect_running_engine_best_effort() {
       }
     }
     END { if (!found) print "" }
-  '
+  ')"
+  if [ -n "$_std" ]; then
+    printf '%s\n' "$_std"
+    return 0
+  fi
+
+  # Check for custom engine sessions — look for screen sessions with ALGORA1_CUSTOM_ENGINE_ID set
+  local _custom_id=""
+  while IFS= read -r _spid; do
+    [ -n "$_spid" ] || continue
+    local _env_val
+    _env_val="$(cat "/proc/${_spid}/environ" 2>/dev/null | tr '\0' '\n' | grep '^ALGORA1_CUSTOM_ENGINE_ID=' | cut -d= -f2- || true)"
+    if [ -n "$_env_val" ]; then
+      _custom_id="$_env_val"
+      break
+    fi
+  done < <(pgrep -f "algora1-session" 2>/dev/null || true)
+  printf '%s\n' "$_custom_id"
 }
 
 ensure_custom_dirs() {
@@ -3493,7 +3511,6 @@ view_custom_engines_menu() {
     local action
     action="$(choose "Custom Engine: $picked" \
       "View Summary" \
-      "Rebuild Zip" \
       "Show Backtest Info" \
       "Delete" \
       "Back")"
@@ -3502,10 +3519,6 @@ view_custom_engines_menu() {
       "View Summary")
         show_custom_engine_summary_box "$picked"
         ui_wait_enter_only
-        ;;
-      "Rebuild Zip")
-        build_custom_bundle_files "$picked"
-        show_notice_with_return "Zip rebuilt successfully: $(basename "$(custom_zip_path "$picked")")"
         ;;
       "Show Backtest Info")
         # Immediately clear to blank — no lingering box during transition
@@ -3659,6 +3672,146 @@ view_custom_engines_menu() {
   done
 }
 
+run_custom_engine_session() {
+  ensure_custom_dirs
+
+  # Pick engine
+  local ids=()
+  while IFS= read -r id; do
+    [ -n "$id" ] && ids+=("$id")
+  done < <(list_custom_engine_ids)
+  [ "${#ids[@]}" -gt 0 ] || { show_notice_with_return "No custom engines found."; return 0; }
+
+  draw_header_once
+
+  # Build choose items: "AAAA  (2025-03-13 14:22)"
+  local items=()
+  for id in "${ids[@]}"; do
+    local meta_path created_display
+    meta_path="$(custom_meta_path "$id")"
+    created_display=""
+    if [ -f "$meta_path" ]; then
+      created_display="$(grep '^CREATED_AT=' "$meta_path" | cut -d'"' -f2 | sed 's/ ET$//' | cut -c1-16 || true)"
+    fi
+    if [ -n "$created_display" ]; then
+      items+=("${id}  (${created_display})")
+    else
+      items+=("${id}")
+    fi
+  done
+  items+=("Back")
+
+  local picked_label
+  picked_label="$(choose "Run Custom Engine — select engine" "${items[@]}")"
+  [ -n "${picked_label:-}" ] || return 0
+  [ "$picked_label" != "Back" ] || return 0
+
+  # Extract the 4-letter ID from the label
+  local picked_id
+  picked_id="$(printf '%s' "$picked_label" | awk '{print $1}')"
+  load_custom_meta "$picked_id" || { show_notice_with_return "Could not load engine: $picked_id"; return 0; }
+
+  # Enforce one-session-at-a-time
+  if has_any_session; then
+    local cnt
+    cnt="$(session_count)"
+    if [ "$cnt" -gt 1 ]; then
+      if confirm "Multiple sessions exist. Delete all and start fresh?"; then
+        delete_all_sessions
+      else
+        return 0
+      fi
+    else
+      local s_raw s_name
+      s_raw="$(get_only_session)"
+      s_name="$(session_pretty_name "$s_raw")"
+      draw_header_once
+      if has_gum; then
+        gum style --border rounded --padding "1 2" --border-foreground 39 \
+          "$(printf "Custom Engines\nSession: %s" "$s_name")"
+        echo ""
+      fi
+      local action
+      action="$(choose "Custom Engines" "Connect" "Delete session" "Back")"
+      case "$action" in
+        "Connect")
+          hard_clear; ui_view_mode_on; screen -r "$s_raw" || true
+          ui_view_mode_off; hard_clear; return 0 ;;
+        "Delete session")
+          if confirm "Delete session '${s_name}'? This will stop any running engine."; then
+            delete_session "$s_raw"
+          fi ;;
+        *) return 0 ;;
+      esac
+    fi
+  fi
+
+  # Name the session
+  draw_header_once
+  local name
+  echo "" >&2
+  name="$(input "Session name (default: ${picked_id,,}):")"
+  name="${name:-${picked_id,,}}"
+  name="$(echo "$name" | tr -d '[:space:]')"
+  [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name."; return 0; }
+
+  # Subscription check — same as standard engines
+  local CHECK_URL="http://34.59.74.231:3000/check"
+  local user_id=""
+  while true; do
+    draw_header_once
+    user_id="$(input "Enter your User ID (cus_xxx):")"
+    user_id="$(printf '%s' "$user_id" | tr -d '[:space:]')"
+    if [ -z "$user_id" ]; then
+      show_notice_with_return "User ID cannot be empty."
+      continue
+    fi
+    local resp_ok=0
+    if command -v curl >/dev/null 2>&1; then
+      local resp_body
+      resp_body="$(curl -s -X POST "$CHECK_URL" \
+        -H 'Content-Type: application/json' \
+        -d "{\"customerId\":\"${user_id}\"}" \
+        --connect-timeout 8 --max-time 12 2>/dev/null || true)"
+      printf '%s' "$resp_body" | grep -q '"active":true' && resp_ok=1
+    fi
+    if [ "$resp_ok" = "1" ]; then
+      break
+    else
+      show_notice_with_return "$(printf "Subscription not active or invalid ID.\n\nPlease try again.")"
+    fi
+  done
+
+  # Build tickers description for intro screen
+  local tickers_display="${TICKERS:-unknown}"
+  local mode_word="Live"
+  [ "${ENGINE_MODE:-Live}" = "Paper" ] && mode_word="Simulated"
+
+  # Launch screen session, passing custom engine metadata via env
+  screen -S "$name" -dm bash -lc "
+    export TERM=screen-256color
+    export ALGORA1_CUSTOM_ENGINE_ID='${picked_id}'
+    export ALGORA1_CUSTOM_TICKERS='${TICKERS:-}'
+    export ALGORA1_CUSTOM_MODE='${ENGINE_MODE:-Live}'
+    export ALGORA1_CUSTOM_STOP_LOSS='${STOP_LOSS:-6}'
+    export ALGORA1_CUSTOM_ALGORITHM_RULE='${ALGORITHM_RULE:-}'
+    cd \$HOME && exec /usr/local/bin/algora1-session
+  "
+
+  # Intro display before attaching
+  hard_clear
+  if has_gum; then
+    gum style --border rounded --padding "1 2" --border-foreground 39 \
+      "$(printf "ALGORA1 INVESTING SOFTWARE\n\n${mode_word} Exposure to ${tickers_display}\n\nCtrl+A then K (select yes) -> Stop engine\nCtrl+A then Ctrl+D -> Detach without stopping")"
+  fi
+  echo ""
+
+  ui_view_mode_on
+  screen -r "$name" || true
+  ui_view_mode_off
+  hard_clear
+}
+
 custom_engines_menu() {
   ensure_custom_dirs
 
@@ -3674,7 +3827,38 @@ custom_engines_menu() {
         "Custom Engine Builder (Advanced)" \
         "Back")"
     else
+      # List engines with timestamps above the run option
+      local _engine_list=""
+      while IFS= read -r _eid; do
+        [ -n "$_eid" ] || continue
+        local _mp _cd
+        _mp="$(custom_meta_path "$_eid")"
+        _cd=""
+        [ -f "$_mp" ] && _cd="$(grep '^CREATED_AT=' "$_mp" | cut -d'"' -f2 | sed 's/ ET$//' | cut -c1-16 || true)"
+        if [ -n "$_cd" ]; then
+          _engine_list="${_engine_list}${_eid}  ${_cd}\n"
+        else
+          _engine_list="${_engine_list}${_eid}\n"
+        fi
+      done < <(list_custom_engine_ids)
+
+      hard_clear
+      if has_gum; then
+        gum style --border rounded --padding "1 2" --border-foreground 39 \
+          "$(printf "ALGORA1 — Control Panel\nWelcome to ALGORA1's Terminal UI.")"
+      fi
+      echo ""
+      # Print engine list as a header above the menu
+      if [ -n "$_engine_list" ]; then
+        printf '\033[38;5;245mCustom Engines:\033[0m\n'
+        printf "$_engine_list" | while IFS= read -r _line; do
+          [ -n "$_line" ] && printf '  \033[38;5;39m%s\033[0m\n' "$_line"
+        done
+        echo ""
+      fi
+
       selection="$(choose "Custom Engines" \
+        "Run Custom Engine" \
         "Custom Engine Builder (Guided)" \
         "Custom Engine Builder (Advanced)" \
         "View Custom Engines" \
@@ -3682,6 +3866,7 @@ custom_engines_menu() {
     fi
 
     case "$selection" in
+      "Run Custom Engine") run_custom_engine_session ;;
       "Custom Engine Builder (Guided)") custom_engine_builder_guided ;;
       "Custom Engine Builder (Advanced)") custom_engine_builder_advanced ;;
       "View Custom Engines") view_custom_engines_menu ;;
@@ -3705,7 +3890,7 @@ running_sessions_menu() {
 
   if [ "$cnt" = "0" ]; then
     local action
-    action="$(choose "Standard Engines" "Start new session" "Back")"
+    action="$(choose "Run Standard Engine" "Start new session" "Back")"
     [ "$action" = "Start new session" ] || return 0
 
     # Enforce no session exists
@@ -3739,11 +3924,11 @@ running_sessions_menu() {
     hard_clear
     if has_gum; then
       gum style --border rounded --padding "1 2" --border-foreground 39 \
-        "$(printf "Standard Engines\nSession: %s" "$s_name")"
+        "$(printf "Run Standard Engine\nSession: %s" "$s_name")"
       echo ""
     fi
 
-    action="$(choose "Standard Engines" "Connect" "Delete session" "Back")"
+    action="$(choose "Run Standard Engine" "Connect" "Delete session" "Back")"
 
     case "$action" in
       "Connect")
@@ -3850,29 +4035,51 @@ live_charts_menu() {
     return 0
   fi
 
-  local pick symbol
+  # Resolve ticker list — custom engines store their tickers in env
+  local tickers_csv=""
   case "$eng" in
-    NVDA)
-      pick="$(choose "Live Charts" "NVIDIA Corporation (NVDA)" "Back")"
-      case "$pick" in
-        "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
-        *) return 0 ;;
-      esac
+    NVDA) tickers_csv="NVDA" ;;
+    TSLA) tickers_csv="TSLA" ;;
+    BEXP|PMNY) tickers_csv="TSLA,NVDA" ;;
+    *)
+      # Custom engine — look up meta
+      local _meta
+      _meta="$(custom_meta_path "$eng" 2>/dev/null || true)"
+      if [ -f "$_meta" ]; then
+        tickers_csv="$(grep '^TICKERS=' "$_meta" | cut -d'"' -f2 | tr ',' ' ' | tr -s ' ' | xargs | tr ' ' ',')"
+      fi
       ;;
-    TSLA)
-      pick="$(choose "Live Charts" "Tesla, Inc. (TSLA)" "Back")"
-      case "$pick" in
-        "Tesla, Inc. (TSLA)") symbol="TSLA" ;;
-        *) return 0 ;;
-      esac
-      ;;
-    BEXP|PMNY|*)
-      pick="$(choose "Live Charts" "Tesla, Inc. (TSLA)" "NVIDIA Corporation (NVDA)" "Back")"
-      case "$pick" in
-        "Tesla, Inc. (TSLA)") symbol="TSLA" ;;
-        "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
-        *) return 0 ;;
-      esac
+  esac
+
+  # Build choose options from tickers
+  local ticker_opts=()
+  IFS=',' read -r -a _t_arr <<< "$tickers_csv"
+  for _t in "${_t_arr[@]}"; do
+    [ -n "$_t" ] || continue
+    case "$_t" in
+      NVDA) ticker_opts+=("NVIDIA Corporation (NVDA)") ;;
+      TSLA) ticker_opts+=("Tesla, Inc. (TSLA)") ;;
+      *)    ticker_opts+=("$_t") ;;
+    esac
+  done
+  ticker_opts+=("Back")
+
+  local pick symbol
+  if [ "${#ticker_opts[@]}" -le 2 ]; then
+    # Only one ticker + Back — skip choose
+    pick="${ticker_opts[0]}"
+  else
+    pick="$(choose "Live Charts" "${ticker_opts[@]}")"
+  fi
+
+  case "$pick" in
+    "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
+    "Tesla, Inc. (TSLA)")        symbol="TSLA" ;;
+    "Back"|"")                   return 0 ;;
+    *)
+      # Raw ticker name
+      symbol="$(printf '%s' "$pick" | grep -oE '[A-Z]+' | head -1)"
+      [ -n "$symbol" ] || return 0
       ;;
   esac
 
@@ -3966,7 +4173,7 @@ main_loop() {
 
     local selection
     selection="$(choose "Select an option" \
-      "Standard Engines" \
+      "Run Standard Engine" \
       "Custom Engines" \
       "Live Status" \
       "Live Charts" \
@@ -3974,7 +4181,7 @@ main_loop() {
       "Exit")"
 
     case "$selection" in
-      "Standard Engines") running_sessions_menu ;;
+      "Run Standard Engine") running_sessions_menu ;;
       "Custom Engines") custom_engines_menu ;;
       "Live Status") live_status_menu ;;
       "Live Charts") live_charts_menu ;;
