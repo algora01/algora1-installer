@@ -608,6 +608,11 @@ EOF
   ui_ok "macOS app created: ${app_root}"
   ui_info "Tip: drag 'ALGORA1' into your Dock. First run may require right-click → Open."
 
+  # Also place a copy on the Desktop for easy access
+  local desktop_app="${HOME}/Desktop/ALGORA1.app"
+  rm -rf "$desktop_app" 2>/dev/null || true
+  cp -R "$app_root" "$desktop_app" 2>/dev/null || true
+
   open -R "${app_root}" >/dev/null 2>&1 || true
 }
 
@@ -3750,35 +3755,121 @@ run_custom_engine_session() {
   draw_header_once
   local name
   echo "" >&2
-  name="$(input "Session name (default: ${picked_id,,}):")"
-  name="${name:-${picked_id,,}}"
+  name="$(input "Session name (default: custom):")"
+  name="${name:-custom}"
   name="$(echo "$name" | tr -d '[:space:]')"
   [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name."; return 0; }
 
-  # Subscription check — same as standard engines
+  # Subscription check — styled box matching the standard engine flow
   local CHECK_URL="http://34.59.74.231:3000/check"
-  local user_id=""
+  local user_id="" _sub_cols _sub_rows _sub_w _sub_inner _sub_left _sub_hline _si
+
+  _sub_cols="$(tput cols 2>/dev/null || echo 80)"
+  _sub_rows="$(tput lines 2>/dev/null || echo 24)"
+  case "$_sub_cols" in ''|*[!0-9]*) _sub_cols=80 ;; esac
+  case "$_sub_rows" in ''|*[!0-9]*) _sub_rows=24 ;; esac
+  _sub_w=76
+  [ "$_sub_w" -gt $((_sub_cols - 2)) ] && _sub_w=$((_sub_cols - 2))
+  [ "$_sub_w" -lt 44 ] && _sub_w=44
+  _sub_inner=$((_sub_w - 4))
+  _sub_left=$(((_sub_cols - _sub_w) / 2))
+  [ "$_sub_left" -lt 0 ] && _sub_left=0
+  _sub_hline=""
+  _si=0; while [ "$_si" -lt $((_sub_w - 2)) ]; do _sub_hline="${_sub_hline}─"; _si=$((_sub_w - 2 - _si > 0 ? _si+1 : _si+1)); done
+
+  _draw_sub_box() {
+    local _line1="${1:-}" _line2="${2:-}" _pad _l _r _inner2
+    _inner2=$((_sub_w - 4))
+    hard_clear
+    local _top=$(( (_sub_rows - 7) / 2 ))
+    [ "$_top" -lt 0 ] && _top=0
+    _si=0; while [ "$_si" -lt "$_top" ]; do printf '\n'; _si=$((_si+1)); done
+    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$_sub_left" '' "$_sub_hline"
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_sub_left" '' "$((_sub_w - 2))" ''
+    # Line 1: prompt + user input
+    local _p1="Enter your User ID (cus_xxx): ${_line1}"
+    _l="${#_p1}"; _pad=$(( _inner2 - _l )); [ "$_pad" -lt 0 ] && _pad=0
+    printf '%*s\033[38;5;39m│\033[0m  %s%*s  \033[38;5;39m│\033[0m\n' "$_sub_left" '' "$_p1" "$_pad" ''
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_sub_left" '' "$((_sub_w - 2))" ''
+    # Line 2: status/error
+    if [ -n "$_line2" ]; then
+      _l="${#_line2}"; _pad=$(( _inner2 - _l )); [ "$_pad" -lt 0 ] && _pad=0
+      printf '%*s\033[38;5;39m│\033[0m  %s%*s  \033[38;5;39m│\033[0m\n' "$_sub_left" '' "$_line2" "$_pad" ''
+    else
+      printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_sub_left" '' "$((_sub_w - 2))" ''
+    fi
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_sub_left" '' "$((_sub_w - 2))" ''
+    printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$_sub_left" '' "$_sub_hline"
+  }
+
+  _animate_verify() {
+    local _uid="$1" _total=40 _bar_w=24 _i _filled _empty _bar _pct _label
+    _i=0
+    while [ "$_i" -lt "$_total" ]; do
+      _filled=$(( (_i + 1) * _bar_w / _total ))
+      _empty=$(( _bar_w - _filled ))
+      _pct=$(( (_i + 1) * 100 / _total ))
+      _bar=""
+      _si=0; while [ "$_si" -lt "$_filled" ]; do _bar="${_bar}█"; _si=$((_si+1)); done
+      _si=0; while [ "$_si" -lt "$_empty" ]; do _bar="${_bar}░"; _si=$((_si+1)); done
+      _label="Verifying subscription... [${_bar}] ${_pct}%"
+      _draw_sub_box "$_uid" "$_label"
+      sleep 0.05 || true
+      _i=$((_i+1))
+    done
+  }
+
   while true; do
-    draw_header_once
-    user_id="$(input "Enter your User ID (cus_xxx):")"
+    _draw_sub_box "" ""
+    # Position cursor on the prompt line, after "Enter your User ID (cus_xxx): "
+    local _top_row=$(( (_sub_rows - 7) / 2 ))
+    [ "$_top_row" -lt 0 ] && _top_row=0
+    local _prompt_row=$(( _top_row + 3 ))
+    local _prompt_col=$(( _sub_left + 2 + ${#"Enter your User ID (cus_xxx): "} + 1 ))
+    printf '\033[%d;%dH' "$_prompt_row" "$_prompt_col"
+    printf '\033[?25h'
+    stty sane < /dev/tty 2>/dev/null || true
+    stty echo icanon < /dev/tty 2>/dev/null || true
+    IFS= read -r user_id < /dev/tty || true
+    printf '\033[?25l'
     user_id="$(printf '%s' "$user_id" | tr -d '[:space:]')"
+
     if [ -z "$user_id" ]; then
-      show_notice_with_return "User ID cannot be empty."
+      _draw_sub_box "" "\033[38;5;196mUser ID cannot be empty.\033[0m"
+      sleep 1
       continue
     fi
+
+    # Animated loading while verifying
+    _animate_verify "$user_id" &
+    local _anim_pid=$!
+
     local resp_ok=0
+    local resp_body=""
     if command -v curl >/dev/null 2>&1; then
-      local resp_body
       resp_body="$(curl -s -X POST "$CHECK_URL" \
         -H 'Content-Type: application/json' \
         -d "{\"customerId\":\"${user_id}\"}" \
         --connect-timeout 8 --max-time 12 2>/dev/null || true)"
       printf '%s' "$resp_body" | grep -q '"active":true' && resp_ok=1
     fi
+
+    # Stop animation
+    kill "$_anim_pid" 2>/dev/null || true
+    wait "$_anim_pid" 2>/dev/null || true
+
     if [ "$resp_ok" = "1" ]; then
       break
     else
-      show_notice_with_return "$(printf "Subscription not active or invalid ID.\n\nPlease try again.")"
+      _draw_sub_box "$user_id" "\033[38;5;196mSubscription not active or invalid ID.\033[0m"
+      sleep 0.3
+      stty sane < /dev/tty 2>/dev/null || true
+      stty -echo icanon < /dev/tty 2>/dev/null || true
+      printf '\033[38;5;136mTry again? (y/n): \033[0m' >&2
+      stty echo icanon < /dev/tty 2>/dev/null || true
+      local _again=""
+      IFS= read -r _again < /dev/tty || true
+      [[ "$_again" =~ ^[Yy]$ ]] || return 0
     fi
   done
 
@@ -3827,36 +3918,7 @@ custom_engines_menu() {
         "Custom Engine Builder (Advanced)" \
         "Back")"
     else
-      # List engines with timestamps above the run option
-      local _engine_list=""
-      while IFS= read -r _eid; do
-        [ -n "$_eid" ] || continue
-        local _mp _cd
-        _mp="$(custom_meta_path "$_eid")"
-        _cd=""
-        [ -f "$_mp" ] && _cd="$(grep '^CREATED_AT=' "$_mp" | cut -d'"' -f2 | sed 's/ ET$//' | cut -c1-16 || true)"
-        if [ -n "$_cd" ]; then
-          _engine_list="${_engine_list}${_eid}  ${_cd}\n"
-        else
-          _engine_list="${_engine_list}${_eid}\n"
-        fi
-      done < <(list_custom_engine_ids)
-
-      hard_clear
-      if has_gum; then
-        gum style --border rounded --padding "1 2" --border-foreground 39 \
-          "$(printf "ALGORA1 — Control Panel\nWelcome to ALGORA1's Terminal UI.")"
-      fi
-      echo ""
-      # Print engine list as a header above the menu
-      if [ -n "$_engine_list" ]; then
-        printf '\033[38;5;245mCustom Engines:\033[0m\n'
-        printf "$_engine_list" | while IFS= read -r _line; do
-          [ -n "$_line" ] && printf '  \033[38;5;39m%s\033[0m\n' "$_line"
-        done
-        echo ""
-      fi
-
+      draw_header_once
       selection="$(choose "Custom Engines" \
         "Run Custom Engine" \
         "Custom Engine Builder (Guided)" \
