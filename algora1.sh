@@ -367,25 +367,14 @@ install_local_cli() {
     : "${ALGORA1_INSTALL_URL:=https://raw.githubusercontent.com/algora01/algora1-installer/main/algora1.sh}"
     need_cmd curl || ui_die "curl is required to install the local command."
 
-    ui_info "Installing local command by downloading from ${ALGORA1_INSTALL_URL}"
-    curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" || ui_die "Failed to download installer."
+    curl -fsSL "${ALGORA1_INSTALL_URL}" -o "${target}" 2>/dev/null || ui_die "Failed to download installer."
     chmod +x "${target}"
-    ui_ok "Installed local command: ${target}"
   else
     local self
     self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-
-    if [ "$self" != "$target" ]; then
-      cp -f "$self" "$target"
-      chmod +x "$target"
-      ui_ok "Installed local command: $target"
-    else
-      ui_ok "Local command already installed: $target"
-    fi
+    cp -f "$self" "$target"
+    chmod +x "$target"
   fi
-
-  ui_info "Add this to your shell profile if needed:"
-  ui_info "  export PATH=\"$target_dir:\$PATH\""
 
   if [ "$(detect_os)" = "macos" ]; then
     local zshrc="${HOME}/.zshrc"
@@ -393,8 +382,6 @@ install_local_cli() {
     touch "$zshrc"
     if ! grep -Fqx "$line" "$zshrc"; then
       printf "\n# algora1\n%s\n" "$line" >> "$zshrc"
-      ui_ok "Added ~/.local/bin to PATH in ~/.zshrc"
-      ui_info "Restart Terminal or run: source ~/.zshrc"
     fi
     export PATH="$HOME/.local/bin:$PATH"
   fi
@@ -610,18 +597,95 @@ EOF
 }
 
 if [ "${1:-}" = "--install-local" ]; then
-  ensure_gum || true
-  ui_header
-  install_local_cli
+  # Clean full-screen install UI — suppress all intermediate noise
+  _install_clean() {
+    local cols rows
+    cols="$(tput cols 2>/dev/null || echo 80)"
+    rows="$(tput lines 2>/dev/null || echo 24)"
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
 
-  if [ "$(detect_os)" = "linux" ]; then
-    install_linux_desktop_shortcut "https://static.wixstatic.com/media/ce61ee_00cd47ee0f9c48f69f0f7546f4298188~mv2.png"
-  fi
+    # Clear screen fully
+    printf '\033[?25l\033[H\033[2J\033[3J' 2>/dev/null || true
 
-  if [ "$(detect_os)" = "macos" ]; then
-    install_macos_app_bundle "${ALGORA1_ICNS_PATH:-}"
-  fi
+    local width=54
+    [ "$width" -gt $((cols - 4)) ] && width=$((cols - 4))
+    local left=$(( (cols - width - 2) / 2 ))
+    [ "$left" -lt 0 ] && left=0
+    local inner=$((width - 2))
+    local hline
+    printf -v hline '%*s' "$inner" ''; hline="${hline// /─}"
+    local top_pad=$(( (rows - 12) / 2 ))
+    [ "$top_pad" -lt 0 ] && top_pad=0
 
+    _iline() {
+      local txt="$1"
+      local plain len lp rp
+      plain="$(printf '%s' "$txt" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')"
+      len="${#plain}"
+      [ "$len" -gt "$((inner - 2))" ] && len=$((inner - 2)) && txt="${plain:0:$len}"
+      lp=$(( (inner - 2 - len) / 2 ))
+      rp=$(( inner - 2 - len - lp ))
+      printf '%*s\033[38;5;39m│\033[0m %*s%s%*s \033[38;5;39m│\033[0m\n' \
+        "$left" '' "$lp" '' "$txt" "$rp" ''
+    }
+
+    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
+
+    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline"
+    _iline ''
+    _iline 'ALGORA1'
+    _iline 'Installing...'
+    _iline ''
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$inner" ''
+
+    # Step 1 — install CLI
+    _iline '  Installing command...'
+    printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
+
+    install_local_cli 2>/dev/null
+
+    # Redraw with step 2
+    printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
+    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline"
+    _iline ''
+    _iline 'ALGORA1'
+    _iline 'Installing...'
+    _iline ''
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$inner" ''
+
+    if [ "$(detect_os)" = "linux" ]; then
+      _iline '  Setting up desktop shortcut...'
+      printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
+      install_linux_desktop_shortcut \
+        "https://static.wixstatic.com/media/ce61ee_00cd47ee0f9c48f69f0f7546f4298188~mv2.png" \
+        2>/dev/null || true
+    elif [ "$(detect_os)" = "macos" ]; then
+      _iline '  Setting up app bundle...'
+      printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
+      install_macos_app_bundle "${ALGORA1_ICNS_PATH:-}" 2>/dev/null || true
+    fi
+
+    # Final success screen
+    printf '\033[?25h\033[H\033[2J\033[3J' 2>/dev/null || true
+    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
+    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$left" '' "$hline"
+    _iline ''
+    _iline 'ALGORA1'
+    _iline '\033[38;5;40m✓ Installation complete\033[0m'
+    _iline ''
+    _iline 'Run: algora1'
+    if [ "$(detect_os)" = "macos" ]; then
+      _iline 'App: ~/Applications/ALGORA1.app'
+    fi
+    _iline ''
+    printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$left" '' "$hline"
+    printf '\n'
+  }
+
+  ensure_gum >/dev/null 2>&1 || true
+  _install_clean
   exit 0
 fi
 
@@ -1347,7 +1411,7 @@ printf "\033[1mControl Panel\033[0m\n"
 printf "Run: \033[38;5;39malgora1\033[0m\n\n"
 
 printf "\033[1mMain Menu\033[0m\n"
-printf "  • Running session\n"
+printf "  • Standard Engines\n"
 printf "  • Live Status\n"
 printf "  • Live Charts\n"
 printf "  • Exit\n\n"
@@ -2385,7 +2449,16 @@ prompt_allocation_csv() {
   expected="${#_tickers[@]}"
 
   while true; do
-    draw_header_once
+    hard_clear
+
+    # Small top padding so ticker box sits near the top without being flush
+    local rows
+    rows="$(tput lines 2>/dev/null || echo 24)"
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+    local top_pad=$(( rows / 6 ))
+    [ "$top_pad" -lt 1 ] && top_pad=1
+    [ "$top_pad" -gt 4 ] && top_pad=4
+    local i; for ((i=0; i<top_pad; i++)); do printf '\n'; done
 
     # Box contains only the tickers line
     center_box "Tickers: $ticker_csv" 0 76 0
@@ -3538,7 +3611,7 @@ running_sessions_menu() {
 
   if [ "$cnt" = "0" ]; then
     local action
-    action="$(choose "Running session" "Start new session" "Back")"
+    action="$(choose "Standard Engines" "Start new session" "Back")"
     [ "$action" = "Start new session" ] || return 0
 
     # Enforce no session exists
@@ -3572,11 +3645,11 @@ running_sessions_menu() {
     hard_clear
     if has_gum; then
       gum style --border rounded --padding "1 2" --border-foreground 39 \
-        "$(printf "Running Session\nSession: %s" "$s_name")"
+        "$(printf "Standard Engines\nSession: %s" "$s_name")"
       echo ""
     fi
 
-    action="$(choose "Running session" "Connect" "Delete session" "Back")"
+    action="$(choose "Standard Engines" "Connect" "Delete session" "Back")"
 
     case "$action" in
       "Connect")
@@ -3799,7 +3872,7 @@ main_loop() {
 
     local selection
     selection="$(choose "Select an option" \
-      "Running session" \
+      "Standard Engines" \
       "Custom Engines" \
       "Live Status" \
       "Live Charts" \
@@ -3807,7 +3880,7 @@ main_loop() {
       "Exit")"
 
     case "$selection" in
-      "Running session") running_sessions_menu ;;
+      "Standard Engines") running_sessions_menu ;;
       "Custom Engines") custom_engines_menu ;;
       "Live Status") live_status_menu ;;
       "Live Charts") live_charts_menu ;;
