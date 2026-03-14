@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_807b8251b3bb4466903ad79cd5bfc35f.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_766baefbee404509ae8b9641a31d897f.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a96cfb23e9f046039264fa9cd2b4cd24.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0df494b5a31b4706a9844b64474d5df8.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f895ebd15fc940ef9b936c749f7e5c87.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_625913cfed184c2998a5f6b04eeb5c7c.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e752457d8ee74217aa36276693262c21.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6f823288b3d446b7a48618f64fce50c8.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -722,7 +722,7 @@ fast_path_to_control_panel_if_ready() {
   ip="$(get_instance_ip)"
   [ -n "${ip}" ] || return 1
 
-  ui_ok "Instance already exists & RUNNING: ${INSTANCE_NAME} (${ZONE})"
+  ui_ok "Instance already exists & Running: ${INSTANCE_NAME} (${ZONE})"
   ui_ok "Instance external IP: ${ip}"
 
   ssh-keygen -R "${ip}" >/dev/null 2>&1 || true
@@ -1640,12 +1640,18 @@ if [ -n "${ALGORA1_CUSTOM_ENGINE_ID:-}" ]; then
     *)     local_engine="BEXP" ;;
   esac
 
+  # Export env vars for engine to detect custom mode
+  export ALGORA1_SKIP_SUBSCRIPTION="${ALGORA1_SKIP_SUBSCRIPTION:-}"
+  export ALGORA1_CUSTOM_USER_ID="${ALGORA1_CUSTOM_USER_ID:-}"
+  export ALGORA1_CUSTOM_ENGINE_ID="${ALGORA1_CUSTOM_ENGINE_ID:-}"
+  export ALGORA1_CUSTOM_TICKERS="${ALGORA1_CUSTOM_TICKERS:-}"
+
   chmod +x "./${local_engine}" >/dev/null 2>&1 || true
 
   if has_gum; then
     gum style --border rounded --padding "1 2" --border-foreground 39 \
-      "$(printf "ALGORA1 INVESTING SOFTWARE\n\nCustom Engine — %s\nBase: %s | Tickers: %s\n\nCtrl+A then K (select yes) -> Stop engine\nCtrl+A then Ctrl+D -> Detach without stopping" \
-        "${ALGORA1_CUSTOM_ENGINE_ID}" "${local_engine}" "${ALGORA1_CUSTOM_TICKERS:-}")" >&2
+      "$(printf "ALGORA1 INVESTING SOFTWARE\n\nCustom Engine — %s\nTickers: %s\n\nCtrl+A then K (select yes) -> Stop engine\nCtrl+A then Ctrl+D -> Detach without stopping" \
+        "${ALGORA1_CUSTOM_ENGINE_ID}" "${ALGORA1_CUSTOM_TICKERS:-}")" >&2
   else
     echo "Custom Engine: ${ALGORA1_CUSTOM_ENGINE_ID}" >&2
   fi
@@ -2475,7 +2481,7 @@ allocation_error_reason() {
 
   # Check for special characters beyond digits and commas
   if [[ "$csv" =~ [^0-9,] ]]; then
-    printf "Special characters are not allowed. Use digits and commas only (e.g. 50,50)."; return
+    printf "Special characters are not allowed.\nUse digits and commas only (e.g. 50,50)."; return
   fi
 
   IFS=',' read -r -a _err_arr <<< "$csv"
@@ -2519,16 +2525,17 @@ prompt_allocation_csv() {
   IFS=',' read -r -a _tickers <<< "$ticker_csv"
   expected="${#_tickers[@]}"
 
-  local rules_msg
-  rules_msg="$(printf \
-    "Tickers: %s\n\nEnter one whole-number percentage per ticker, comma-separated.\nRules:\n  • No decimals or fractions  (e.g. 50.5 is invalid)\n  • No special characters     (digits and commas only)\n  • Each value must be 1–100\n  • No zeros                  (every ticker needs at least 1%%)\n  • Total must be ≤ 100%%     (e.g. 60,30 is valid; 60,50 exceeds 100%%)\n  • Exactly %d value(s) required, one per ticker" \
-    "$ticker_csv" "$expected")"
-
   while true; do
     draw_header_once
-    # Show the allocation rules box before the input prompt
-    center_box "$rules_msg" 0 76 0
-    echo ""
+    printf '\n' >&2
+    printf '  Tickers: %s\n\n' "$ticker_csv" >&2
+    printf '  Enter one whole-number percentage per ticker, comma-separated.\n\n' >&2
+    printf '  • No decimals or fractions (e.g. 50.5 is invalid)\n' >&2
+    printf '  • No special characters (digits and commas only)\n' >&2
+    printf '  • Each value must be 1–100\n' >&2
+    printf '  • No zeros (every ticker needs at least 1%%)\n' >&2
+    printf '  • Total must be ≤ 100%% (e.g. 60,30 is valid; 60,50 exceeds 100%%)\n' >&2
+    printf '  • Exactly %d value(s) required, one per ticker\n\n' "$expected" >&2
 
     allocations="$(input "Percentages (example: 50,50):")"
     norm="$(normalize_allocation_csv "$allocations")"
@@ -2856,16 +2863,50 @@ list_sessions_raw() {
     || true
 }
 
+# Standard sessions: exclude those prefixed with "c_"
+list_standard_sessions() {
+  list_sessions_raw | grep -v '\.[0-9]*\.c_' | grep -v '\.c_' || true
+}
+
+# Custom sessions: only those prefixed with "c_"
+list_custom_sessions() {
+  list_sessions_raw | grep '\.c_' || true
+}
+
 session_count() {
   list_sessions_raw | sed '/^\s*$/d' | wc -l | tr -d ' '
+}
+
+standard_session_count() {
+  list_standard_sessions | sed '/^\s*$/d' | wc -l | tr -d ' '
+}
+
+custom_session_count() {
+  list_custom_sessions | sed '/^\s*$/d' | wc -l | tr -d ' '
 }
 
 get_only_session() {
   list_sessions_raw | head -n 1
 }
 
+get_only_standard_session() {
+  list_standard_sessions | head -n 1
+}
+
+get_only_custom_session() {
+  list_custom_sessions | head -n 1
+}
+
 has_any_session() {
   [ "$(session_count)" != "0" ]
+}
+
+has_any_standard_session() {
+  [ "$(standard_session_count)" != "0" ]
+}
+
+has_any_custom_session() {
+  [ "$(custom_session_count)" != "0" ]
 }
 
 delete_session() {
@@ -3348,7 +3389,6 @@ show_custom_engine_summary_box() {
   [ -n "${ALLOCATION_MODE:-}" ] && summary="${summary}\nAllocation Mode: ${ALLOCATION_MODE}"
   [ -n "${ALLOCATIONS:-}" ] && summary="${summary}\nAllocations: ${ALLOCATIONS}"
   [ -n "$stop_loss_display" ] && summary="${summary}\nStop Loss: ${stop_loss_display}"
-  [ -n "${ALGORITHM_RULE:-}" ] && summary="${summary}\nEntry/Exit: ${ALGORITHM_RULE}"
   [ -n "$created_display" ] && summary="${summary}\nCreated: ${created_display}"
   summary="${summary}\nZip: ${zip_name}"
   summary="${summary}\n\nPress Enter to return."
@@ -3512,10 +3552,29 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
       algorithm_rule="BUY if price > SMA50 and SMA10 > SMA20 and NOT(price < SMA20), else SELL"
       ;;
     "Custom SMA Lengths")
-      local sma_fast sma_mid sma_slow
-      sma_fast="$(input "Fast SMA length:")"
-      sma_mid="$(input "Mid SMA length:")"
-      sma_slow="$(input "Slow SMA length:")"
+      local sma_fast sma_mid sma_slow _sma_err=""
+      while true; do
+        draw_header_once
+        [ -n "$_sma_err" ] && printf '\033[38;5;196m%s\033[0m\n\n' "$_sma_err" >&2
+        sma_fast="$(input "Fast SMA length (e.g. 5 or 10):")"
+        sma_mid="$(input "Mid SMA length (e.g. 20):")"
+        sma_slow="$(input "Slow SMA length (e.g. 50):")"
+
+        # Validate: must be positive integers 1-500, fast < mid < slow
+        _sma_err=""
+        for _sv in "$sma_fast" "$sma_mid" "$sma_slow"; do
+          if ! [[ "$_sv" =~ ^[0-9]+$ ]] || [ "$_sv" -lt 1 ] || [ "$_sv" -gt 500 ]; then
+            _sma_err="Each SMA length must be a whole number from 1 to 500."
+            break
+          fi
+        done
+        if [ -z "$_sma_err" ]; then
+          if [ "$sma_fast" -ge "$sma_mid" ] || [ "$sma_mid" -ge "$sma_slow" ]; then
+            _sma_err="SMA lengths must be in ascending order: Fast < Mid < Slow."
+          fi
+        fi
+        [ -z "$_sma_err" ] && break
+      done
       algorithm_rule="BUY if price > SMA${sma_slow} and SMA${sma_fast} > SMA${sma_mid} and NOT(price < SMA${sma_mid}), else SELL"
       ;;
   esac
@@ -3723,6 +3782,48 @@ view_custom_engines_menu() {
 run_custom_engine_session() {
   ensure_custom_dirs
 
+  # Check for existing custom session FIRST — show Connect/Delete like standard engine does
+  if has_any_custom_session; then
+    local cnt
+    cnt="$(custom_session_count)"
+    if [ "$cnt" -gt 1 ]; then
+      if confirm "Multiple custom sessions exist. Delete all and start fresh?"; then
+        local _s
+        while IFS= read -r _s; do
+          [ -n "$_s" ] || continue
+          delete_session "$_s"
+        done < <(list_custom_sessions)
+      else
+        return 0
+      fi
+    else
+      local s_raw s_name
+      s_raw="$(get_only_custom_session)"
+      s_name="$(session_pretty_name "$s_raw")"
+
+      hard_clear
+      if has_gum; then
+        gum style --border rounded --padding "1 2" --border-foreground 39 \
+          "$(printf "Run Custom Engine\nSession: %s" "$s_name")"
+        echo ""
+      fi
+
+      local action
+      action="$(choose "Run Custom Engine" "Connect" "Delete session" "Back")"
+      case "$action" in
+        "Connect")
+          hard_clear; ui_view_mode_on; screen -r "$s_raw" || true
+          ui_view_mode_off; hard_clear; return 0 ;;
+        "Delete session")
+          if confirm "Delete session '${s_name}'? This will stop any running engine."; then
+            delete_session "$s_raw"
+          fi
+          return 0 ;;
+        *) return 0 ;;
+      esac
+    fi
+  fi
+
   # Pick engine
   local ids=()
   while IFS= read -r id; do
@@ -3759,36 +3860,6 @@ run_custom_engine_session() {
   picked_id="$(printf '%s' "$picked_label" | awk '{print $1}')"
   load_custom_meta "$picked_id" || { show_notice_with_return "Could not load engine: $picked_id"; return 0; }
 
-  # Enforce one-session-at-a-time
-  if has_any_session; then
-    local cnt
-    cnt="$(session_count)"
-    if [ "$cnt" -gt 1 ]; then
-      if confirm "Multiple sessions exist. Delete all and start fresh?"; then
-        delete_all_sessions
-      else
-        return 0
-      fi
-    else
-      local s_raw s_name
-      s_raw="$(get_only_session)"
-      s_name="$(session_pretty_name "$s_raw")"
-      draw_header_once
-      local action
-      action="$(choose "Custom Engines" "Connect" "Delete session" "Back")"
-      case "$action" in
-        "Connect")
-          hard_clear; ui_view_mode_on; screen -r "$s_raw" || true
-          ui_view_mode_off; hard_clear; return 0 ;;
-        "Delete session")
-          if confirm "Delete session '${s_name}'? This will stop any running engine."; then
-            delete_session "$s_raw"
-          fi ;;
-        *) return 0 ;;
-      esac
-    fi
-  fi
-
   # Name the session
   draw_header_once
   local name
@@ -3797,6 +3868,7 @@ run_custom_engine_session() {
   name="${name:-custom}"
   name="$(echo "$name" | tr -d '[:space:]')"
   [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name."; return 0; }
+  name="c_${name}"
 
   # Subscription check — uses prompt_box_input for reliable styled input
   local CHECK_URL="http://34.59.74.231:3000/check"
@@ -3913,6 +3985,9 @@ run_custom_engine_session() {
     wait "$_anim_pid" 2>/dev/null || true
 
     if [ "$resp_ok" = "1" ]; then
+      # Show 100% complete
+      _draw_sub_input "Verifying subscription... [$(printf '%0.s█' $(seq 1 $_vbar_w))] 100%" "$user_id"
+      sleep 0.5
       break
     else
       _draw_sub_input "Subscription not active or invalid ID." "$user_id"
@@ -3933,6 +4008,8 @@ run_custom_engine_session() {
     export ALGORA1_CUSTOM_MODE='${ENGINE_MODE:-Live}'
     export ALGORA1_CUSTOM_STOP_LOSS='${STOP_LOSS:-6}'
     export ALGORA1_CUSTOM_ALGORITHM_RULE='${ALGORITHM_RULE:-}'
+    export ALGORA1_SKIP_SUBSCRIPTION='1'
+    export ALGORA1_CUSTOM_USER_ID='${user_id}'
     cd \$HOME && exec /usr/local/bin/algora1-session
   "
 
@@ -3986,13 +4063,17 @@ custom_engines_menu() {
 
 running_sessions_menu() {
   local cnt
-  cnt="$(session_count)"
+  cnt="$(standard_session_count)"
 
   if [ "$cnt" -gt 1 ]; then
-    warn "Multiple screen sessions detected (${cnt}). One-session maxiumum per account deleting extras."
-    if confirm "Delete all sessions now? (recommended)"; then
-      delete_all_sessions
-      ok "All sessions deleted."
+    warn "Multiple standard sessions detected (${cnt}). Deleting extras."
+    if confirm "Delete all standard sessions now? (recommended)"; then
+      local _s
+      while IFS= read -r _s; do
+        [ -n "$_s" ] || continue
+        delete_session "$_s"
+      done < <(list_standard_sessions)
+      ok "Standard sessions deleted."
     fi
     return 0
   fi
@@ -4002,8 +4083,8 @@ running_sessions_menu() {
     action="$(choose "Run Standard Engine" "Start new session" "Back")"
     [ "$action" = "Start new session" ] || return 0
 
-    # Enforce no session exists
-    if has_any_session; then
+    # Enforce no standard session exists
+    if has_any_standard_session; then
       warn "A session already exists. Delete it first."
       return 0
     fi
@@ -4026,7 +4107,7 @@ running_sessions_menu() {
 
   else
     local s_raw s_name action
-    s_raw="$(get_only_session)"
+    s_raw="$(get_only_standard_session)"
     s_name="$s_raw"
     command -v session_pretty_name >/dev/null 2>&1 && s_name="$(session_pretty_name "$s_raw")"
 
