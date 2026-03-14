@@ -1628,21 +1628,6 @@ run_engine_prompt_if_safe() {
 # Clean screen so session UI never mixes with prior content
 printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
-# If launched for a custom engine, run it directly — skip standard engine menu entirely
-if [ -n "${ALGORA1_CUSTOM_ENGINE_ID:-}" ]; then
-  [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
-  [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
-  _custom_bin="${HOME}/.algora1_custom/builds/${ALGORA1_CUSTOM_ENGINE_ID}/${ALGORA1_CUSTOM_ENGINE_ID}"
-  if [ -f "$_custom_bin" ]; then
-    chmod +x "$_custom_bin" 2>/dev/null || true
-    exec "$_custom_bin"
-  else
-    echo "Custom engine binary not found: $_custom_bin" >&2
-    sleep 3
-    exit 1
-  fi
-fi
-
 if has_gum; then
   gum style --border rounded --padding "1 2" --border-foreground 39 \
     "$(printf "ALGORA1 session — One-session mode\nSelect engine")" >&2
@@ -3770,104 +3755,103 @@ run_custom_engine_session() {
   name="$(echo "$name" | tr -d '[:space:]')"
   [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "Invalid name."; return 0; }
 
-  # Subscription check — matches Python engine login style exactly:
-  # simple box, cursor inline on prompt line, loading bar in same box.
+  # Subscription check — uses prompt_box_input for reliable styled input
   local CHECK_URL="http://34.59.74.231:3000/check"
   local user_id="" resp_ok resp_body
-  local _sub_input_row=0 _sub_input_col=0
 
-  # Draw the same 7-row box the Python engines use:
-  #   border / blank / "Enter your User ID: [text]" / blank / [loading] / blank / border
-  _draw_sub_login_box() {
-    local user_text="${1:-}" loading_text="${2:-}"
-    local rows cols width inner left top hline i
-    rows="$(tput lines 2>/dev/null || echo 24)"
-    cols="$(tput cols  2>/dev/null || echo 80)"
-    case "$rows" in ''|*[!0-9]*) rows=24 ;; esac
-    case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
-    width=76
-    [ "$width" -gt $((cols - 2)) ] && width=$((cols - 2))
-    [ "$width" -lt 44 ]            && width=44
-    inner=$(( width - 4 ))
-    left=$(( (cols - width) / 2 ))
-    [ "$left" -lt 0 ] && left=0
-    top=$(( (rows - 7) / 2 ))
-    [ "$top"  -lt 0 ] && top=0
-    hline=""; i=0
-    while [ "$i" -lt $((width - 2)) ]; do hline="${hline}─"; i=$((i+1)); done
+  # Helper: draw the full subscription box with cursor positioned inside for input
+  _draw_sub_input() {
+    local _status="${1:-}"  # optional status line below input
+    local _rows _cols _width _inner _left _top _hline _i
+    _rows="$(tput lines 2>/dev/null || echo 24)"
+    _cols="$(tput cols 2>/dev/null || echo 80)"
+    case "$_rows" in ''|*[!0-9]*) _rows=24 ;; esac
+    case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
+    _width=76
+    [ "$_width" -gt $((_cols - 2)) ] && _width=$((_cols - 2))
+    [ "$_width" -lt 44 ] && _width=44
+    _inner=$((_width - 4))
+    _left=$(((_cols - _width) / 2))
+    [ "$_left" -lt 0 ] && _left=0
+    _top=$(((_rows - 11) / 2))
+    [ "$_top" -lt 0 ] && _top=0
+    _hline=""
+    _i=0; while [ "$_i" -lt $((_width - 2)) ]; do _hline="${_hline}─"; _i=$((_i+1)); done
 
-    local plabel="Enter your User ID (cus_xxx): "
-    local prompt_content="${plabel}${user_text}"
-    local pc_pad=$(( inner - ${#prompt_content} ))
-    [ "$pc_pad" -lt 0 ] && pc_pad=0
-    local lt_plain
-    lt_plain="$(printf '%s' "$loading_text" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')"
-    local lt_pad=$(( inner - ${#lt_plain} ))
-    [ "$lt_pad" -lt 0 ] && lt_pad=0
+    printf '\033[H\033[2J\033[3J'
+    _i=0; while [ "$_i" -lt "$_top" ]; do printf '\n'; _i=$((_i+1)); done
 
-    printf '\033[H\033[2J\033[3J' > /dev/tty
-    i=0; while [ "$i" -lt "$top" ]; do printf '\n' > /dev/tty; i=$((i+1)); done
+    printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$_left" '' "$_hline"
+    # Title row
+    local _title="ALGORA1 — Custom Engine" _tl _tr _tp
+    _tl="${#_title}"; _tr=$(( (_inner - _tl) / 2 )); _tp=$(( _inner - _tl - _tr ))
+    [ "$_tr" -lt 0 ] && _tr=0; [ "$_tp" -lt 0 ] && _tp=0
+    printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$_tr" '' "$_title" "$_tp" ''
+    # Blank
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    # Prompt label row
+    local _plabel="Enter your User ID (cus_xxx):" _pl _pp
+    _pl="${#_plabel}"; _pp=$(( _inner - _pl ))
+    [ "$_pp" -lt 0 ] && _pp=0
+    printf '%*s\033[38;5;39m│\033[0m  %s%*s  \033[38;5;39m│\033[0m\n' "$_left" '' "$_plabel" "$_pp" ''
+    # Input row (cursor goes here)
+    printf '%*s\033[38;5;39m│\033[0m  %-*s  \033[38;5;39m│\033[0m\n' "$_left" '' "$((_inner))" "Input:"
+    # Blank
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    # Status row
+    if [ -n "$_status" ]; then
+      local _sl _sr _sp
+      _sl="${#_status}"; _sp=$(( (_inner - _sl) / 2 )); _sr=$(( _inner - _sl - _sp ))
+      [ "$_sp" -lt 0 ] && _sp=0; [ "$_sr" -lt 0 ] && _sr=0
+      printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$_sp" '' "$_status" "$_sr" ''
+    else
+      printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    fi
+    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$_left" '' "$_hline"
 
-    printf '%*s\033[38;5;39m╭%s╮\033[0m\n'              "$left" '' "$hline"                        > /dev/tty
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$((width-2))" ''       > /dev/tty
-    printf '%*s\033[38;5;39m│\033[0m %s%*s \033[38;5;39m│\033[0m\n' \
-           "$left" '' "$prompt_content" "$pc_pad" ''                                                > /dev/tty
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$((width-2))" ''       > /dev/tty
-    printf '%*s\033[38;5;39m│\033[0m %s%*s \033[38;5;39m│\033[0m\n' \
-           "$left" '' "$loading_text" "$lt_pad" ''                                                  > /dev/tty
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$left" '' "$((width-2))" ''       > /dev/tty
-    printf '%*s\033[38;5;39m╰%s╯\033[0m\n'              "$left" '' "$hline"                        > /dev/tty
-
-    # Cursor: border(1) + blank(1) + prompt row(1) = row top+3; col = left + "│ " + label
-    _sub_input_row=$(( top + 3 ))
-    _sub_input_col=$(( left + 3 + ${#plabel} ))
+    # Return cursor position for the Input row (row = _top + 5, col = _left + 3 + len("Input:") + 1)
+    local _input_row=$(( _top + 5 ))
+    local _input_col=$(( _left + 3 + 7 ))   # 7 = len("Input:")+ space
+    printf '\033[%d;%dH' "$_input_row" "$_input_col"
   }
 
   while true; do
-    _draw_sub_login_box "" ""
-    printf '\033[%d;%dH\033[?25h' "$_sub_input_row" "$_sub_input_col" > /dev/tty
-    stty sane    < /dev/tty 2>/dev/null || true
+    _draw_sub_input ""
+    printf '\033[?25h'
+    stty sane < /dev/tty 2>/dev/null || true
     stty echo icanon < /dev/tty 2>/dev/null || true
     IFS= read -r user_id < /dev/tty || true
-    printf '\033[?25l' > /dev/tty
+    printf '\033[?25l'
     user_id="$(printf '%s' "$user_id" | tr -d '[:space:]')"
 
     if [ -z "$user_id" ]; then
-      # Show error inline in same box (red), matching Python engine style
-      _C_ERR="$(printf '\033[38;5;196m')"
-      _C_RST="$(printf '\033[0m')"
-      _draw_sub_login_box "" "${_C_ERR}User ID cannot be empty!${_C_RST}"
+      _draw_sub_input "User ID cannot be empty."
       sleep 1.5
       continue
     fi
 
-    # Dynamic bar width: inner - prefix("Verifying subscription... [") - suffix("] 100%")
-    # prefix=27 chars, suffix=7 chars → bar_w = inner - 34
-    local _cols_tmp _width_tmp _inner_tmp _bar_w
-    _cols_tmp="$(tput cols 2>/dev/null || echo 80)"
-    case "$_cols_tmp" in ''|*[!0-9]*) _cols_tmp=80 ;; esac
-    _width_tmp=76
-    [ "$_width_tmp" -gt $((_cols_tmp - 2)) ] && _width_tmp=$((_cols_tmp - 2))
-    [ "$_width_tmp" -lt 44 ] && _width_tmp=44
-    _inner_tmp=$(( _width_tmp - 4 ))
-    _bar_w=$(( _inner_tmp - 34 ))
-    [ "$_bar_w" -lt 10 ] && _bar_w=10
+    # Animate progress bar inline inside the box
+    local _vbar_w=24 _vi _vf _ve _vb _vp _vs
+    _vi=0
+    while [ "$_vi" -lt 40 ]; do
+      _vf=$(( (_vi + 1) * _vbar_w / 40 ))
+      _ve=$(( _vbar_w - _vf ))
+      _vp=$(( (_vi + 1) * 100 / 40 ))
+      _vb=""
+      local _vj=0
+      while [ "$_vj" -lt "$_vf" ]; do _vb="${_vb}█"; _vj=$((_vj+1)); done
+      _vj=0
+      while [ "$_vj" -lt "$_ve" ]; do _vb="${_vb}░"; _vj=$((_vj+1)); done
+      _vs="$(printf '%s: [%s] %3d%%' "$user_id" "$_vb" "$_vp")"
+      _draw_sub_input "$_vs"
+      _vi=$((_vi+1))
+      sleep 0.05 || true
+    done &
+    local _anim_pid=$!
 
-    # Synchronous progress bar — redraws box in-place, no background process
-    local _step _fill _empty _bar _pct _k
-    for _step in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-      _fill=$(( _step * _bar_w / 20 ))
-      _empty=$(( _bar_w - _fill ))
-      _bar=""; _k=0
-      while [ "$_k" -lt "$_fill"  ]; do _bar="${_bar}█"; _k=$((_k+1)); done
-      _k=0
-      while [ "$_k" -lt "$_empty" ]; do _bar="${_bar}░"; _k=$((_k+1)); done
-      _pct=$(( _step * 100 / 20 ))
-      _draw_sub_login_box "$user_id" "Verifying subscription... [${_bar}] ${_pct}%"
-      sleep 0.12 || true
-    done
-
-    resp_ok=0; resp_body=""
+    resp_ok=0
+    resp_body=""
     if command -v curl >/dev/null 2>&1; then
       resp_body="$(curl -s -X POST "$CHECK_URL" \
         -H 'Content-Type: application/json' \
@@ -3876,13 +3860,13 @@ run_custom_engine_session() {
       printf '%s' "$resp_body" | grep -q '"active":true' && resp_ok=1
     fi
 
+    kill "$_anim_pid" 2>/dev/null || true
+    wait "$_anim_pid" 2>/dev/null || true
+
     if [ "$resp_ok" = "1" ]; then
       break
     else
-      # Show error inline in same box (red), matching Python engine style
-      _C_ERR="$(printf '\033[38;5;196m')"
-      _C_RST="$(printf '\033[0m')"
-      _draw_sub_login_box "$user_id" "${_C_ERR}Subscription not active or invalid ID.${_C_RST}"
+      _draw_sub_input "Subscription not active or invalid ID."
       sleep 2
     fi
   done
