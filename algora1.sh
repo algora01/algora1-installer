@@ -692,8 +692,7 @@ if [ "${1:-}" = "--install-local" ]; then
     printf '%*s%s│%s%*s%s%s│%s\n' "$left" '' "$C_BOX" "$C_RESET" "$inner" '' '' "$C_BOX" "$C_RESET" > /dev/tty
 
     local txt plain len lp rp
-    for txt in "ALGORA1" "${C_OK}✓ Installation complete${C_RESET}" "" "Run: algora1" "App: ~/Applications/ALGORA1.app"; do
-      [ "$(detect_os)" != "macos" ] && [ "$txt" = "App: ~/Applications/ALGORA1.app" ] && continue
+    for txt in "" "ALGORA1" "" "${C_OK}✓ Installation complete${C_RESET}" ""; do
       plain="$(printf '%s' "$txt" | sed 's/\x1b\[[0-9;]*m//g' 2>/dev/null || printf '%s' "$txt")"
       len="${#plain}"
       lp=$(( (inner - len) / 2 )); rp=$(( inner - len - lp ))
@@ -1594,10 +1593,10 @@ run_engine_prompt_if_safe() {
   fi
 
   local action
-  action="$(choose "Run investment engine?" "Run investment engine" "Back")"
+  action="$(choose "Run standard engine?" "Run standard engine" "Back")"
 
   # IMPORTANT: Back should exit the screen session so you return to the Home menu
-  if [ "$action" != "Run investment engine" ]; then
+  if [ "$action" != "Run standard engine" ]; then
     return 1
   fi
 
@@ -1628,6 +1627,35 @@ run_engine_prompt_if_safe() {
 # Clean screen so session UI never mixes with prior content
 printf '\033[H\033[2J\033[3J' 2>/dev/null || true
 
+# ---- Custom Engine Mode ----
+# If launched with ALGORA1_CUSTOM_ENGINE_ID set, skip standard menu and run directly.
+if [ -n "${ALGORA1_CUSTOM_ENGINE_ID:-}" ]; then
+  [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
+  [ -f "$HOME/.bashrc" ]  && source "$HOME/.bashrc"  || true
+
+  # Determine which base engine to run
+  local_engine=""
+  case "${ALGORA1_CUSTOM_MODE:-Live}" in
+    Paper) local_engine="PMNY" ;;
+    *)     local_engine="BEXP" ;;
+  esac
+
+  chmod +x "./${local_engine}" >/dev/null 2>&1 || true
+
+  if has_gum; then
+    gum style --border rounded --padding "1 2" --border-foreground 39 \
+      "$(printf "ALGORA1 INVESTING SOFTWARE\n\nCustom Engine — %s\nBase: %s | Tickers: %s\n\nCtrl+A then K (select yes) -> Stop engine\nCtrl+A then Ctrl+D -> Detach without stopping" \
+        "${ALGORA1_CUSTOM_ENGINE_ID}" "${local_engine}" "${ALGORA1_CUSTOM_TICKERS:-}")" >&2
+  else
+    echo "Custom Engine: ${ALGORA1_CUSTOM_ENGINE_ID}" >&2
+  fi
+  echo "" >&2
+
+  "./${local_engine}"
+  exit 0
+fi
+
+# ---- Standard Engine Mode ----
 if has_gum; then
   gum style --border rounded --padding "1 2" --border-foreground 39 \
     "$(printf "ALGORA1 session — One-session mode\nSelect engine")" >&2
@@ -1656,10 +1684,9 @@ sudo tee /usr/local/bin/algora1-live-chart >/dev/null <<'CHART'
 set -euo pipefail
 
 SYMBOL="${1:-TSLA}"
-case "$SYMBOL" in
-  TSLA|NVDA) ;;
-  *) SYMBOL="TSLA" ;;
-esac
+# Accept any valid ticker symbol (uppercase)
+SYMBOL="$(printf '%s' "$SYMBOL" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z')"
+[ -n "$SYMBOL" ] || SYMBOL="TSLA"
 
 python3 - "$SYMBOL" <<'PY'
 import json
@@ -2516,11 +2543,14 @@ prompt_allocation_csv() {
   done
 }
 
+_PROMPT_STOP_LOSS_RESULT=""
+
 prompt_stop_loss() {
   local prompt="${1:-Stop loss percent}"
   local default="${2:-6}"
   local sl=""
   local err=""
+  _PROMPT_STOP_LOSS_RESULT=""
 
   while true; do
     draw_header_once
@@ -2529,7 +2559,7 @@ prompt_stop_loss() {
     sl="${sl:-$default}"
 
     if validate_stop_loss "$sl"; then
-      printf '%s\n' "$sl"
+      _PROMPT_STOP_LOSS_RESULT="$sl"
       return 0
     fi
 
@@ -2897,11 +2927,40 @@ live_status_for_engine() {
     TSLA) echo "tsla_live_status.txt" ;;
     NVDA) echo "nvda_live_status.txt" ;;
     PMNY) echo "pmny_live_status.txt" ;;
-    *)    echo "${1,,}_live_status.txt" ;;
+    *)
+      # Custom engine — determine base engine from meta
+      local _meta_file _mode
+      _meta_file="$(custom_meta_path "$1" 2>/dev/null || true)"
+      if [ -f "$_meta_file" ]; then
+        _mode="$(grep '^ENGINE_MODE=' "$_meta_file" | cut -d'"' -f2 || true)"
+        case "$_mode" in
+          Paper) echo "pmny_live_status.txt" ;;
+          *)     echo "bexp_live_status.txt" ;;
+        esac
+      else
+        echo "${1,,}_live_status.txt"
+      fi
+      ;;
   esac
 }
 
 detect_running_engine_best_effort() {
+  # Check for custom engine sessions FIRST — look for screen sessions with ALGORA1_CUSTOM_ENGINE_ID set
+  local _custom_id=""
+  while IFS= read -r _spid; do
+    [ -n "$_spid" ] || continue
+    local _env_val
+    _env_val="$(cat "/proc/${_spid}/environ" 2>/dev/null | tr '\0' '\n' | grep '^ALGORA1_CUSTOM_ENGINE_ID=' | cut -d= -f2- || true)"
+    if [ -n "$_env_val" ]; then
+      _custom_id="$_env_val"
+      break
+    fi
+  done < <(pgrep -f "algora1-session" 2>/dev/null || true)
+  if [ -n "$_custom_id" ]; then
+    printf '%s\n' "$_custom_id"
+    return 0
+  fi
+
   # Match standard engine executables by argv[0] basename
   local _std
   _std="$(ps -eo args= 2>/dev/null | awk '
@@ -2921,18 +2980,7 @@ detect_running_engine_best_effort() {
     return 0
   fi
 
-  # Check for custom engine sessions — look for screen sessions with ALGORA1_CUSTOM_ENGINE_ID set
-  local _custom_id=""
-  while IFS= read -r _spid; do
-    [ -n "$_spid" ] || continue
-    local _env_val
-    _env_val="$(cat "/proc/${_spid}/environ" 2>/dev/null | tr '\0' '\n' | grep '^ALGORA1_CUSTOM_ENGINE_ID=' | cut -d= -f2- || true)"
-    if [ -n "$_env_val" ]; then
-      _custom_id="$_env_val"
-      break
-    fi
-  done < <(pgrep -f "algora1-session" 2>/dev/null || true)
-  printf '%s\n' "$_custom_id"
+  printf '\n'
 }
 
 ensure_custom_dirs() {
@@ -3287,27 +3335,26 @@ show_custom_engine_summary_box() {
     created_display="${created_display} ET"
   fi
 
-  local summary
-  summary="$(cat <<EOF
-Custom Engine Name: ${ENGINE_ID}
-Mode: ${ENGINE_MODE}
-Builder: ${ENGINE_BUILDER}
-Universe: ${UNIVERSE_TYPE}
-Tickers: ${TICKERS:-}
-Industry: ${INDUSTRY:-}
-Portfolio Type: ${PORTFOLIO_TYPE:-}
-Metric Focus: ${METRIC_FOCUS:-}
-Allocation Mode: ${ALLOCATION_MODE:-}
-Allocations: ${ALLOCATIONS:-}
-Stop Loss: ${stop_loss_display}
-Created: ${created_display}
-Zip: ${zip_name}
+  # Build summary with only non-empty fields
+  local summary=""
+  summary="Custom Engine Name: ${ENGINE_ID}"
+  [ -n "${ENGINE_MODE:-}" ] && summary="${summary}\nMode: ${ENGINE_MODE}"
+  [ -n "${ENGINE_BUILDER:-}" ] && summary="${summary}\nBuilder: ${ENGINE_BUILDER}"
+  [ -n "${UNIVERSE_TYPE:-}" ] && summary="${summary}\nUniverse: ${UNIVERSE_TYPE}"
+  [ -n "${TICKERS:-}" ] && summary="${summary}\nTickers: ${TICKERS}"
+  [ -n "${INDUSTRY:-}" ] && summary="${summary}\nIndustry: ${INDUSTRY}"
+  [ -n "${PORTFOLIO_TYPE:-}" ] && summary="${summary}\nPortfolio Type: ${PORTFOLIO_TYPE}"
+  [ -n "${METRIC_FOCUS:-}" ] && summary="${summary}\nMetric Focus: ${METRIC_FOCUS}"
+  [ -n "${ALLOCATION_MODE:-}" ] && summary="${summary}\nAllocation Mode: ${ALLOCATION_MODE}"
+  [ -n "${ALLOCATIONS:-}" ] && summary="${summary}\nAllocations: ${ALLOCATIONS}"
+  [ -n "$stop_loss_display" ] && summary="${summary}\nStop Loss: ${stop_loss_display}"
+  [ -n "${ALGORITHM_RULE:-}" ] && summary="${summary}\nEntry/Exit: ${ALGORITHM_RULE}"
+  [ -n "$created_display" ] && summary="${summary}\nCreated: ${created_display}"
+  summary="${summary}\nZip: ${zip_name}"
+  summary="${summary}\n\nPress Enter to return."
 
-Press Enter to return.
-EOF
-)"
   hard_clear
-  center_box "$summary" 0 76 1
+  center_box "$(printf '%b' "$summary")" 0 76 1
 }
 
 custom_engine_builder_guided() {
@@ -3363,7 +3410,8 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
 
     tickers="$ticker"
 
-    stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
+    prompt_stop_loss "Stop loss percent" "6"
+    stop_loss="$_PROMPT_STOP_LOSS_RESULT"
   else
     draw_header_once
     industry="$(choose "Select industry" "${CUSTOM_INDUSTRIES[@]}" "Back")"
@@ -3456,18 +3504,12 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
 
   local model_choice algorithm_rule
   draw_header_once
-  model_choice="$(choose "Entry/Exit model" "Default Trend" "Fast Trend" "Conservative Trend" "Custom SMA Lengths" "Back")"
+  model_choice="$(choose "Entry/Exit model" "Default Trend" "Custom SMA Lengths" "Back")"
   [ "$model_choice" != "Back" ] || return 0
 
   case "$model_choice" in
     "Default Trend")
       algorithm_rule="BUY if price > SMA50 and SMA10 > SMA20 and NOT(price < SMA20), else SELL"
-      ;;
-    "Fast Trend")
-      algorithm_rule="BUY if price > SMA30 and SMA5 > SMA10 and NOT(price < SMA10), else SELL"
-      ;;
-    "Conservative Trend")
-      algorithm_rule="BUY if price > SMA100 and SMA20 > SMA50 and NOT(price < SMA50), else SELL"
       ;;
     "Custom SMA Lengths")
       local sma_fast sma_mid sma_slow
@@ -3479,7 +3521,8 @@ AMZN, TSLA, HD, GOOG, META, NFLX, COST, WMT, PG, XOM, CVX"
   esac
 
   local stop_loss
-  stop_loss="$(prompt_stop_loss "Stop loss percent" "6")"
+  prompt_stop_loss "Stop loss percent" "6"
+  stop_loss="$_PROMPT_STOP_LOSS_RESULT"
 
   save_custom_meta "$id" \
     ENGINE_ID "$id" \
@@ -3651,7 +3694,7 @@ view_custom_engines_menu() {
         _box_line ''
         _box_line "$_url"
         _box_line ''
-        _box_line 'Press Enter to return and stop.'
+        _box_line 'Press Enter to return.'
         _box_line ''
         printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$_left" '' "$_hline"
 
@@ -3762,62 +3805,70 @@ run_custom_engine_session() {
   # Helper: draw the full subscription box with cursor positioned inside for input
   _draw_sub_input() {
     local _status="${1:-}"  # optional status line below input
+  _draw_sub_input() {
+    local _status="${1:-}"  # optional status line below input
+    local _user_text="${2:-}"  # text already typed
     local _rows _cols _width _inner _left _top _hline _i
     _rows="$(tput lines 2>/dev/null || echo 24)"
     _cols="$(tput cols 2>/dev/null || echo 80)"
     case "$_rows" in ''|*[!0-9]*) _rows=24 ;; esac
     case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
-    _width=76
+    _width=78
     [ "$_width" -gt $((_cols - 2)) ] && _width=$((_cols - 2))
     [ "$_width" -lt 44 ] && _width=44
     _inner=$((_width - 4))
     _left=$(((_cols - _width) / 2))
     [ "$_left" -lt 0 ] && _left=0
-    _top=$(((_rows - 11) / 2))
+
+    local _plabel="Enter your User ID (cus_xxx): "
+    local _prompt_line="${_plabel}${_user_text}"
+    local _loading_line="${_status:-}"
+
+    # Box content: blank, prompt, blank, loading/status, blank
+    local _box_lines=5
+    local _box_h=$((_box_lines + 2))
+    _top=$(((_rows - _box_h) / 2))
     [ "$_top" -lt 0 ] && _top=0
+
     _hline=""
     _i=0; while [ "$_i" -lt $((_width - 2)) ]; do _hline="${_hline}─"; _i=$((_i+1)); done
 
     printf '\033[H\033[2J\033[3J'
     _i=0; while [ "$_i" -lt "$_top" ]; do printf '\n'; _i=$((_i+1)); done
 
+    # Top border
     printf '%*s\033[38;5;39m╭%s╮\033[0m\n' "$_left" '' "$_hline"
-    # Title row
-    local _title="ALGORA1 — Custom Engine" _tl _tr _tp
-    _tl="${#_title}"; _tr=$(( (_inner - _tl) / 2 )); _tp=$(( _inner - _tl - _tr ))
-    [ "$_tr" -lt 0 ] && _tr=0; [ "$_tp" -lt 0 ] && _tp=0
-    printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$_tr" '' "$_title" "$_tp" ''
     # Blank
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
-    # Prompt label row
-    local _plabel="Enter your User ID (cus_xxx):" _pl _pp
-    _pl="${#_plabel}"; _pp=$(( _inner - _pl ))
-    [ "$_pp" -lt 0 ] && _pp=0
-    printf '%*s\033[38;5;39m│\033[0m  %s%*s  \033[38;5;39m│\033[0m\n' "$_left" '' "$_plabel" "$_pp" ''
-    # Input row (cursor goes here)
-    printf '%*s\033[38;5;39m│\033[0m  %-*s  \033[38;5;39m│\033[0m\n' "$_left" '' "$((_inner))" "Input:"
+    printf '%*s\033[38;5;39m│\033[0m%-*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    # Prompt row
+    local _pvis="${#_prompt_line}"
+    local _ppad=$((_inner - _pvis))
+    [ "$_ppad" -lt 0 ] && _ppad=0
+    printf '%*s\033[38;5;39m│\033[0m %s%*s \033[38;5;39m│\033[0m\n' "$_left" '' "$_prompt_line" "$_ppad" ''
     # Blank
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
-    # Status row
-    if [ -n "$_status" ]; then
-      local _sl _sr _sp
-      _sl="${#_status}"; _sp=$(( (_inner - _sl) / 2 )); _sr=$(( _inner - _sl - _sp ))
+    printf '%*s\033[38;5;39m│\033[0m%-*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    # Status/loading row (centered)
+    if [ -n "$_loading_line" ]; then
+      local _sl="${#_loading_line}" _sp _sr
+      _sp=$(((_inner - _sl) / 2)); _sr=$((_inner - _sl - _sp))
       [ "$_sp" -lt 0 ] && _sp=0; [ "$_sr" -lt 0 ] && _sr=0
-      printf '%*s\033[38;5;39m│\033[0m%*s%s%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$_sp" '' "$_status" "$_sr" ''
+      printf '%*s\033[38;5;39m│\033[0m %*s%s%*s \033[38;5;39m│\033[0m\n' "$_left" '' "$_sp" '' "$_loading_line" "$_sr" ''
     else
-      printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+      printf '%*s\033[38;5;39m│\033[0m%-*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
     fi
-    printf '%*s\033[38;5;39m│\033[0m%*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    # Blank
+    printf '%*s\033[38;5;39m│\033[0m%-*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
+    # Bottom border
     printf '%*s\033[38;5;39m╰%s╯\033[0m\n' "$_left" '' "$_hline"
 
-    # Return cursor position for the Input row (row = _top + 5, col = _left + 3 + len("Input:") + 1)
-    local _input_row=$(( _top + 5 ))
-    local _input_col=$(( _left + 3 + 7 ))   # 7 = len("Input:")+ space
+    # Position cursor at end of prompt text for user input
+    local _input_row=$(( _top + 3 ))  # prompt is 3rd line (top + border + blank + prompt)
+    local _input_col=$(( _left + 2 + ${#_plabel} ))  # after "│ " + label
     printf '\033[%d;%dH' "$_input_row" "$_input_col"
   }
 
   while true; do
-    _draw_sub_input ""
+    _draw_sub_input "" ""
     printf '\033[?25h'
     stty sane < /dev/tty 2>/dev/null || true
     stty echo icanon < /dev/tty 2>/dev/null || true
@@ -3826,7 +3877,7 @@ run_custom_engine_session() {
     user_id="$(printf '%s' "$user_id" | tr -d '[:space:]')"
 
     if [ -z "$user_id" ]; then
-      _draw_sub_input "User ID cannot be empty."
+      _draw_sub_input "User ID cannot be empty." ""
       sleep 1.5
       continue
     fi
@@ -3843,8 +3894,8 @@ run_custom_engine_session() {
       while [ "$_vj" -lt "$_vf" ]; do _vb="${_vb}█"; _vj=$((_vj+1)); done
       _vj=0
       while [ "$_vj" -lt "$_ve" ]; do _vb="${_vb}░"; _vj=$((_vj+1)); done
-      _vs="$(printf '%s: [%s] %3d%%' "$user_id" "$_vb" "$_vp")"
-      _draw_sub_input "$_vs"
+      _vs="$(printf 'Verifying subscription... [%s] %3d%%' "$_vb" "$_vp")"
+      _draw_sub_input "$_vs" "$user_id"
       _vi=$((_vi+1))
       sleep 0.05 || true
     done &
@@ -3866,7 +3917,7 @@ run_custom_engine_session() {
     if [ "$resp_ok" = "1" ]; then
       break
     else
-      _draw_sub_input "Subscription not active or invalid ID."
+      _draw_sub_input "Subscription not active or invalid ID." "$user_id"
       sleep 2
     fi
   done
@@ -4119,6 +4170,13 @@ live_charts_menu() {
     case "$_t" in
       NVDA) ticker_opts+=("NVIDIA Corporation (NVDA)") ;;
       TSLA) ticker_opts+=("Tesla, Inc. (TSLA)") ;;
+      AAPL) ticker_opts+=("Apple Inc. (AAPL)") ;;
+      MSFT) ticker_opts+=("Microsoft Corp. (MSFT)") ;;
+      GOOG) ticker_opts+=("Alphabet Inc. (GOOG)") ;;
+      AMZN) ticker_opts+=("Amazon.com (AMZN)") ;;
+      META) ticker_opts+=("Meta Platforms (META)") ;;
+      NFLX) ticker_opts+=("Netflix Inc. (NFLX)") ;;
+      JPM)  ticker_opts+=("JPMorgan Chase (JPM)") ;;
       *)    ticker_opts+=("$_t") ;;
     esac
   done
@@ -4135,6 +4193,13 @@ live_charts_menu() {
   case "$pick" in
     "NVIDIA Corporation (NVDA)") symbol="NVDA" ;;
     "Tesla, Inc. (TSLA)")        symbol="TSLA" ;;
+    "Apple Inc. (AAPL)")         symbol="AAPL" ;;
+    "Microsoft Corp. (MSFT)")    symbol="MSFT" ;;
+    "Alphabet Inc. (GOOG)")      symbol="GOOG" ;;
+    "Amazon.com (AMZN)")         symbol="AMZN" ;;
+    "Meta Platforms (META)")     symbol="META" ;;
+    "Netflix Inc. (NFLX)")       symbol="NFLX" ;;
+    "JPMorgan Chase (JPM)")      symbol="JPM" ;;
     "Back"|"")                   return 0 ;;
     *)
       # Raw ticker name
@@ -4294,7 +4359,11 @@ ALLOCATIONS_STR = os.environ.get("ALGORA1_ALLOCATIONS",     "AUTO_EQUAL")
 ENGINE_MODE     = os.environ.get("ALGORA1_ENGINE_MODE",     "Live")
 
 TICKERS       = [t.strip().upper() for t in TICKERS_STR.split(",") if t.strip()]
-STOP_LOSS_PCT = -abs(float(STOP_LOSS_RAW))
+
+# Strip any ANSI escape codes or non-numeric chars from stop loss value
+_stop_loss_clean = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', STOP_LOSS_RAW).strip()
+_stop_loss_clean = re.sub(r'[^0-9.]', '', _stop_loss_clean) or "6"
+STOP_LOSS_PCT = -abs(float(_stop_loss_clean))
 
 def parse_sma_lengths(rule):
     nums = re.findall(r'SMA(\d+)', rule)
