@@ -3805,8 +3805,6 @@ run_custom_engine_session() {
   # Helper: draw the full subscription box with cursor positioned inside for input
   _draw_sub_input() {
     local _status="${1:-}"  # optional status line below input
-  _draw_sub_input() {
-    local _status="${1:-}"  # optional status line below input
     local _user_text="${2:-}"  # text already typed
     local _rows _cols _width _inner _left _top _hline _i
     _rows="$(tput lines 2>/dev/null || echo 24)"
