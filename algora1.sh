@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ec04bd345cda4db18cd4e30d0c2df994.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a8d8ce060794a8c991fb096d2fc88e4.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5bfd339967da4f59869b898139e94a4c.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_db02bb73b75b4d39abd7afcc8beaca1b.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1e64d6d5259f45079b65b96f559c0258.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1d5096837e424178a1a28aa36acf49c0.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ee6406554481472082a3789860d88d06.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_065c57a6bc684392bd32d7e22653d504.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -1662,14 +1662,8 @@ if [ -n "${ALGORA1_CUSTOM_ENGINE_ID:-}" ]; then
 
   chmod +x "./${local_engine}" >/dev/null 2>&1 || true
 
-  if has_gum; then
-    gum style --border rounded --padding "1 2" --border-foreground 39 \
-      "$(printf "ALGORA1 INVESTING SOFTWARE\n\nCustom Engine — %s\nTickers: %s\n\nCtrl+A then K (select yes) -> Stop engine\nCtrl+A then Ctrl+D -> Detach without stopping" \
-        "${ALGORA1_CUSTOM_ENGINE_ID}" "${ALGORA1_CUSTOM_TICKERS:-}")" >&2
-  else
-    echo "Custom Engine: ${ALGORA1_CUSTOM_ENGINE_ID}" >&2
-  fi
-  echo "" >&2
+  # No intro here — the Python engine will display its own custom intro
+  # (matching the standard engine format with centered box + pulse below)
 
   "./${local_engine}"
   exit 0
@@ -4036,6 +4030,12 @@ run_custom_engine_session() {
     printf '%s' "$resp_body" | grep -q '"active":true' && resp_ok=1
 
     if [ "$resp_ok" = "1" ]; then
+      # Show completed 100% bar briefly before proceeding (matching PMNY.py behavior)
+      local _full_bar="" _fj=0
+      while [ "$_fj" -lt "$_vbar_w" ]; do _full_bar="${_full_bar}█"; _fj=$((_fj+1)); done
+      _draw_sub_input "$(printf 'Verifying subscription... [%s] 100%%' "$_full_bar")" "$user_id"
+      sleep 0.8
+      hard_clear
       break
     else
       # Redraw box with error in red (matching PMNY.py format)
@@ -4082,13 +4082,8 @@ run_custom_engine_session() {
     cd \$HOME && exec /usr/local/bin/algora1-session
   "
 
-  # Intro display before attaching — show custom engine name, not PMNY
-  hard_clear
-  if has_gum; then
-    gum style --border rounded --padding "1 2" --border-foreground 39 \
-      "$(printf "ALGORA1 INVESTING SOFTWARE\n\nCustom Investment Engine — %s %s\n\nCtrl+A then K (select yes) -> Stop engine\nCtrl+A then Ctrl+D -> Detach without stopping" "${picked_id}" "${mode_word}")"
-  fi
-  echo ""
+  # Small delay to let screen session initialize before attaching
+  sleep 0.3
 
   ui_view_mode_on
   screen -r "$name" || true
