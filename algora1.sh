@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_807b8251b3bb4466903ad79cd5bfc35f.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_766baefbee404509ae8b9641a31d897f.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a96cfb23e9f046039264fa9cd2b4cd24.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0df494b5a31b4706a9844b64474d5df8.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_ec04bd345cda4db18cd4e30d0c2df994.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_1a8d8ce060794a8c991fb096d2fc88e4.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_5bfd339967da4f59869b898139e94a4c.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_db02bb73b75b4d39abd7afcc8beaca1b.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -2931,10 +2931,20 @@ delete_session() {
 
   for _ in {1..20}; do
     if ! list_sessions_raw | grep -Fxq "$s"; then
-      return 0
+      break
     fi
     sleep 0.1 || true
   done
+
+  # Truncate engine logs so System Activity doesn't show stale entries from deleted sessions
+  for _lf in bexp_investing.log pmny_investing.log tsla_investing.log nvda_investing.log; do
+    : > "${HOME}/${_lf}" 2>/dev/null || true
+  done
+  # Also truncate live status files
+  for _sf in bexp_live_status.txt pmny_live_status.txt tsla_live_status.txt nvda_live_status.txt; do
+    : > "${HOME}/${_sf}" 2>/dev/null || true
+  done
+
   return 0
 }
 
@@ -3952,10 +3962,14 @@ run_custom_engine_session() {
     printf '%*s\033[38;5;39m│\033[0m%-*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
     # Status/loading row (centered)
     if [ -n "$_loading_line" ]; then
-      local _sl="${#_loading_line}" _sp _sr
+      local _sl_plain _sl _sp _sr
+      _sl_plain="$(printf '%b' "$_loading_line" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g')"
+      _sl="${#_sl_plain}"
       _sp=$(((_inner - _sl) / 2)); _sr=$((_inner - _sl - _sp))
       [ "$_sp" -lt 0 ] && _sp=0; [ "$_sr" -lt 0 ] && _sr=0
-      printf '%*s\033[38;5;39m│\033[0m %*s%s%*s \033[38;5;39m│\033[0m\n' "$_left" '' "$_sp" '' "$_loading_line" "$_sr" ''
+      printf '%*s\033[38;5;39m│\033[0m %*s' "$_left" '' "$_sp" ''
+      printf '%b' "$_loading_line"
+      printf '%*s \033[38;5;39m│\033[0m\n' "$_sr" ''
     else
       printf '%*s\033[38;5;39m│\033[0m%-*s\033[38;5;39m│\033[0m\n' "$_left" '' "$((_width - 2))" ''
     fi
@@ -4024,8 +4038,18 @@ run_custom_engine_session() {
     if [ "$resp_ok" = "1" ]; then
       break
     else
-      _draw_sub_input "Subscription not active or invalid ID." "$user_id"
-      printf '\n' > /dev/tty 2>/dev/null || true
+      # Redraw box with error in red (matching PMNY.py format)
+      _draw_sub_input "\033[38;5;196mSubscription not active or invalid ID.\033[0m" "$user_id"
+
+      # Position cursor below the box for "Try again?" prompt
+      local _err_rows _err_box_h _err_top _err_bottom
+      _err_rows="$(tput lines 2>/dev/null || echo 24)"
+      case "$_err_rows" in ''|*[!0-9]*) _err_rows=24 ;; esac
+      _err_box_h=7  # border + 5 content lines + border
+      _err_top=$(((_err_rows - _err_box_h) / 2))
+      [ "$_err_top" -lt 0 ] && _err_top=0
+      _err_bottom=$((_err_top + _err_box_h + 2))
+      printf '\033[%d;1H' "$_err_bottom" > /dev/tty 2>/dev/null || true
       stty sane < /dev/tty 2>/dev/null || true
       stty echo icanon < /dev/tty 2>/dev/null || true
       printf '\033[?25h' > /dev/tty 2>/dev/null || true
