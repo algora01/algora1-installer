@@ -18,10 +18,10 @@ ENGINE_NAMES=( "BEXP" "PMNY" "TSLA" "NVDA" )
 
 zip_url_for_engine() {
   case "$1" in
-    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_f895ebd15fc940ef9b936c749f7e5c87.zip" ;;
-    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_625913cfed184c2998a5f6b04eeb5c7c.zip" ;;
-    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_e752457d8ee74217aa36276693262c21.zip" ;;
-    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_6f823288b3d446b7a48618f64fce50c8.zip" ;;
+    BEXP) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_807b8251b3bb4466903ad79cd5bfc35f.zip" ;;
+    PMNY) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_766baefbee404509ae8b9641a31d897f.zip" ;;
+    TSLA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_a96cfb23e9f046039264fa9cd2b4cd24.zip" ;;
+    NVDA) echo "https://ce61ee09-0950-4d0d-b651-266705220b65.usrfiles.com/archives/ce61ee_0df494b5a31b4706a9844b64474d5df8.zip" ;;
     *) echo "" ;;
   esac
 }
@@ -730,6 +730,14 @@ fast_path_to_control_panel_if_ready() {
 
   local key_path="${HOME}/.ssh/${KEY_NAME}"
   ui_info "Updating control panel on VM…"
+
+  # Suppress keyboard input during install so keystrokes don't leak
+  local _saved_stty=""
+  if [ -t 0 ]; then
+    _saved_stty="$(stty -g 2>/dev/null || true)"
+    stty -echo -icanon 2>/dev/null || true
+  fi
+
   install_control_panel_on_vm "${ip}"
 
   # Ensure backtest dependencies are installed (idempotent, silent)
@@ -737,6 +745,12 @@ fast_path_to_control_panel_if_ready() {
     ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
     "${REMOTE_USER}@${ip}" \
     "command -v pip3 >/dev/null 2>&1 || sudo apt-get install -y python3-pip >/dev/null 2>&1 || true; pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --user >/dev/null 2>&1 || true"
+
+  # Drain any buffered keystrokes and restore terminal
+  if [ -n "$_saved_stty" ]; then
+    while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
+    stty "$_saved_stty" 2>/dev/null || true
+  fi
 
   if [ "$(detect_os)" = "macos" ]; then
     ensure_macos_app_bundle_present "${ALGORA1_ICNS_PATH:-}" >/dev/null 2>&1 || true
@@ -2958,7 +2972,20 @@ log_for_engine() {
     TSLA) echo "tsla_investing.log" ;;
     NVDA) echo "nvda_investing.log" ;;
     PMNY) echo "pmny_investing.log" ;;
-    *)    echo "${1,,}_investing.log" ;;
+    *)
+      # Custom engine — determine base engine from meta
+      local _meta_file _mode
+      _meta_file="$(custom_meta_path "$1" 2>/dev/null || true)"
+      if [ -f "$_meta_file" ]; then
+        _mode="$(grep '^ENGINE_MODE=' "$_meta_file" | cut -d'"' -f2 || true)"
+        case "$_mode" in
+          Paper) echo "pmny_investing.log" ;;
+          *)     echo "bexp_investing.log" ;;
+        esac
+      else
+        echo "${1,,}_investing.log"
+      fi
+      ;;
   esac
 }
 
@@ -3782,6 +3809,12 @@ view_custom_engines_menu() {
 run_custom_engine_session() {
   ensure_custom_dirs
 
+  # Check if a standard engine is already running
+  if has_any_standard_session; then
+    show_notice_with_return "A standard engine is currently running.\n\nStop it first from Run Standard Engine before starting a custom engine."
+    return 0
+  fi
+
   # Check for existing custom session FIRST — show Connect/Delete like standard engine does
   if has_any_custom_session; then
     local cnt
@@ -3952,46 +3985,58 @@ run_custom_engine_session() {
       continue
     fi
 
-    # Animate progress bar inline inside the box
-    local _vbar_w=24 _vi _vf _ve _vb _vp _vs
-    _vi=0
-    while [ "$_vi" -lt 40 ]; do
-      _vf=$(( (_vi + 1) * _vbar_w / 40 ))
-      _ve=$(( _vbar_w - _vf ))
-      _vp=$(( (_vi + 1) * 100 / 40 ))
-      _vb=""
-      local _vj=0
+    # Start curl in background while showing loading animation in foreground
+    local _resp_file
+    _resp_file="$(mktemp /tmp/algora1_sub_XXXXXX)"
+    (
+      if command -v curl >/dev/null 2>&1; then
+        curl -s -X POST "$CHECK_URL" \
+          -H 'Content-Type: application/json' \
+          -d "{\"customerId\":\"${user_id}\"}" \
+          --connect-timeout 8 --max-time 12 2>/dev/null > "$_resp_file" || true
+      fi
+    ) &
+    local _curl_pid=$!
+
+    # Foreground animation — matches PMNY.py animated_loading(duration=8)
+    local _vbar_w=24 _total_steps=80 _duration=8 _vi=0
+    while [ "$_vi" -lt "$_total_steps" ]; do
+      local _vf=$(( (_vi + 1) * _vbar_w / _total_steps ))
+      local _ve=$(( _vbar_w - _vf ))
+      local _vp=$(( (_vi + 1) * 100 / _total_steps ))
+      local _vb="" _vj=0
       while [ "$_vj" -lt "$_vf" ]; do _vb="${_vb}█"; _vj=$((_vj+1)); done
       _vj=0
       while [ "$_vj" -lt "$_ve" ]; do _vb="${_vb}░"; _vj=$((_vj+1)); done
-      _vs="$(printf 'Verifying subscription... [%s] %3d%%' "$_vb" "$_vp")"
-      _draw_sub_input "$_vs" "$user_id"
+      _draw_sub_input "$(printf 'Verifying subscription... [%s] %3d%%' "$_vb" "$_vp")" "$user_id"
       _vi=$((_vi+1))
-      sleep 0.05 || true
-    done &
-    local _anim_pid=$!
+      sleep "$(awk "BEGIN{printf \"%.4f\", $_duration/$_total_steps}")" 2>/dev/null || sleep 0.1
+    done
+
+    # Ensure curl is done
+    wait "$_curl_pid" 2>/dev/null || true
 
     resp_ok=0
-    resp_body=""
-    if command -v curl >/dev/null 2>&1; then
-      resp_body="$(curl -s -X POST "$CHECK_URL" \
-        -H 'Content-Type: application/json' \
-        -d "{\"customerId\":\"${user_id}\"}" \
-        --connect-timeout 8 --max-time 12 2>/dev/null || true)"
-      printf '%s' "$resp_body" | grep -q '"active":true' && resp_ok=1
-    fi
-
-    kill "$_anim_pid" 2>/dev/null || true
-    wait "$_anim_pid" 2>/dev/null || true
+    resp_body="$(cat "$_resp_file" 2>/dev/null || true)"
+    rm -f "$_resp_file" 2>/dev/null || true
+    printf '%s' "$resp_body" | grep -q '"active":true' && resp_ok=1
 
     if [ "$resp_ok" = "1" ]; then
-      # Show 100% complete
-      _draw_sub_input "Verifying subscription... [$(printf '%0.s█' $(seq 1 $_vbar_w))] 100%" "$user_id"
-      sleep 0.5
       break
     else
       _draw_sub_input "Subscription not active or invalid ID." "$user_id"
-      sleep 2
+      printf '\n' > /dev/tty 2>/dev/null || true
+      stty sane < /dev/tty 2>/dev/null || true
+      stty echo icanon < /dev/tty 2>/dev/null || true
+      printf '\033[?25h' > /dev/tty 2>/dev/null || true
+      printf '\033[38;5;136mTry again? (y/n): \033[0m' > /dev/tty 2>/dev/null || true
+      local _retry=""
+      IFS= read -r _retry < /dev/tty || true
+      printf '\033[?25l'
+      case "$_retry" in
+        [Yy]*|"") ;;  # continue loop
+        *) return 0 ;;  # user said no, back to menu
+      esac
     fi
   done
 
@@ -4062,6 +4107,12 @@ custom_engines_menu() {
 }
 
 running_sessions_menu() {
+  # Check if a custom engine is already running
+  if has_any_custom_session; then
+    show_notice_with_return "A custom engine is currently running.\n\nStop it first from Custom Engines before starting a standard engine."
+    return 0
+  fi
+
   local cnt
   cnt="$(standard_session_count)"
 
@@ -4935,6 +4986,13 @@ main() {
 
   copy_engines_from_wix_to_vm "${ip}"
 
+  # Suppress keyboard input during install
+  local _saved_stty2=""
+  if [ -t 0 ]; then
+    _saved_stty2="$(stty -g 2>/dev/null || true)"
+    stty -echo -icanon 2>/dev/null || true
+  fi
+
   install_control_panel_on_vm "${ip}"
 
   # Ensure backtest dependencies are installed
@@ -4943,6 +5001,12 @@ main() {
     ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i "${key_path}" \
     "${REMOTE_USER}@${ip}" \
     "command -v pip3 >/dev/null 2>&1 || sudo apt-get install -y python3-pip >/dev/null 2>&1 || true; pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --break-system-packages >/dev/null 2>&1 || pip3 install streamlit plotly yfinance pandas numpy pytz --quiet --user >/dev/null 2>&1 || true"
+
+  # Drain any buffered keystrokes and restore terminal
+  if [ -n "$_saved_stty2" ]; then
+    while IFS= read -r -t 0.01 _junk 2>/dev/null; do :; done
+    stty "$_saved_stty2" 2>/dev/null || true
+  fi
 
   completion_screen "${ip}"
 }
